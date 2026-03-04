@@ -1,9 +1,8 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const IORedis = require("ioredis");
+import { Redis } from "ioredis";
 
 const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-const redis = new IORedis(redisUrl, {
+const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: 3,
   retryStrategy(times: number) {
     if (times > 5) return null;
