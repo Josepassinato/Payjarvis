@@ -66,10 +66,10 @@ export class AmazonExtractor implements SiteExtractor {
     const data = this.parseResult(result);
 
     return {
-      amount: this.parseAmount(data.totalText ?? ""),
-      currency: data.currency ?? "USD",
-      items: data.items ?? [],
-      merchantName: data.merchantName ?? "Amazon",
+      amount: this.parseAmount((data.totalText as string) ?? ""),
+      currency: (data.currency as string) ?? "USD",
+      items: (data.items as string[]) ?? [],
+      merchantName: (data.merchantName as string) ?? "Amazon",
     };
   }
 

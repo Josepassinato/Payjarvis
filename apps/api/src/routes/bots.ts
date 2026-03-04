@@ -169,9 +169,7 @@ export async function botRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: "Cannot change status of a revoked bot" });
     }
 
-    if (normalizedStatus === "REVOKED" && existing.status !== "REVOKED") {
-      // Permanent revocation
-    }
+    // At this point existing.status is ACTIVE or PAUSED (REVOKED returned above)
 
     const bot = await prisma.bot.update({
       where: { id: botId },

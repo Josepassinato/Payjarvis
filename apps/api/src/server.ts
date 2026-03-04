@@ -7,6 +7,8 @@ import { policyRoutes } from "./routes/policies.js";
 import { paymentRoutes } from "./routes/payments.js";
 import { approvalRoutes } from "./routes/approvals.js";
 import { transactionRoutes } from "./routes/transactions.js";
+import { publicVerifyRoutes } from "./routes/v1/verify.js";
+import { platformRoutes } from "./routes/v1/platform.js";
 
 const app = Fastify({ logger: true });
 
@@ -20,6 +22,10 @@ await app.register(policyRoutes);
 await app.register(paymentRoutes);
 await app.register(approvalRoutes);
 await app.register(transactionRoutes);
+
+// Public identity layer (v1)
+await app.register(publicVerifyRoutes);
+await app.register(platformRoutes);
 
 // Serve adapter.js for merchant integration
 app.get("/adapter.js", async (request, reply) => {
