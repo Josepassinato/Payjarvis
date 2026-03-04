@@ -7,6 +7,10 @@ export {
   type SystemPromptConfig,
   PayjarvisToolHandler,
   type PayjarvisToolHandlerConfig,
+  OpenClawPayjarvisClient,
+  type OpenClawClientConfig,
+  type ChatOptions,
+  type ChatResult,
 } from "./openclaw/index.js";
 
 export interface VerifyResult {
