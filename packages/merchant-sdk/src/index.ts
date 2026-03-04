@@ -1,5 +1,14 @@
 import { BditVerifier } from "@payjarvis/bdit";
 
+// OpenClaw integration (Fase 1 — function calling)
+export {
+  PAYJARVIS_OPENCLAW_TOOLS,
+  generateSystemPrompt,
+  type SystemPromptConfig,
+  PayjarvisToolHandler,
+  type PayjarvisToolHandlerConfig,
+} from "./openclaw/index.js";
+
 export interface VerifyResult {
   valid: boolean;
   bot?: {
