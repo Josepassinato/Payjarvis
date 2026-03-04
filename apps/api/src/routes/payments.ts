@@ -9,6 +9,7 @@ import { updateTrustScore } from "../services/trust-score.js";
 import { redisSet, redisExists } from "../services/redis.js";
 import { randomUUID } from "node:crypto";
 import { emitApprovalEvent } from "./approvals.js";
+import { notifyApprovalCreated } from "../services/notifications.js";
 
 export async function paymentRoutes(app: FastifyInstance) {
   const issuer = new BditIssuer(
@@ -216,6 +217,11 @@ export async function paymentRoutes(app: FastifyInstance) {
         category,
         expiresAt: expiresAt.toISOString(),
       });
+
+      // Send Telegram notification (fire-and-forget)
+      notifyApprovalCreated(bot.ownerId, {
+        botName: bot.name, amount, merchantName, approvalId: approval.id,
+      }).catch(err => console.error('[Notification]', err));
 
       await createAuditLog({
         entityType: "transaction",

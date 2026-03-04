@@ -2,9 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { prisma } from "@payjarvis/database";
 import { BditIssuer } from "@payjarvis/bdit";
 import { requireAuth, getKycLevel } from "../middleware/auth.js";
+import { requireBotAuth } from "../middleware/bot-auth.js";
 import { createAuditLog } from "../services/audit.js";
 import { updateTrustScore } from "../services/trust-score.js";
-import { redisGet } from "../services/redis.js";
+import { redisGet, redisSet } from "../services/redis.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 
@@ -245,6 +246,9 @@ export async function approvalRoutes(app: FastifyInstance) {
         payload: { botId: approval.botId, amount: approval.amount, humanApproved: true },
       });
 
+      // Store BDIT token in Redis so the SDK can retrieve it via polling
+      await redisSet(`approval:token:${id}`, token, 300);
+
       emitApprovalEvent(user.id, "approval_responded", {
         id,
         status: "APPROVED",
@@ -301,6 +305,44 @@ export async function approvalRoutes(app: FastifyInstance) {
     return {
       success: true,
       data: { status: "REJECTED" },
+    };
+  });
+
+  // GET /approvals/:id/status — bot-auth: poll approval status from SDK
+  app.get("/approvals/:id/status", { preHandler: [requireBotAuth] }, async (request, reply) => {
+    const botId = (request as any).botId as string;
+    const { id } = request.params as { id: string };
+
+    const approval = await prisma.approvalRequest.findFirst({
+      where: { id, botId },
+      include: { transaction: true },
+    });
+
+    if (!approval) return reply.status(404).send({ success: false, error: "Approval not found" });
+
+    // Lazy expire check
+    if (approval.status === "PENDING" && new Date() > approval.expiresAt) {
+      await prisma.approvalRequest.update({ where: { id }, data: { status: "EXPIRED" } });
+      return {
+        success: true,
+        data: { status: "EXPIRED", transactionId: approval.transactionId },
+      };
+    }
+
+    // If approved, try to retrieve the BDIT token from Redis
+    let bditToken: string | null = null;
+    if (approval.status === "APPROVED") {
+      bditToken = await redisGet(`approval:token:${id}`);
+    }
+
+    return {
+      success: true,
+      data: {
+        status: approval.status,
+        transactionId: approval.transactionId,
+        bditToken: bditToken ?? undefined,
+        expiresAt: approval.expiresAt.toISOString(),
+      },
     };
   });
 

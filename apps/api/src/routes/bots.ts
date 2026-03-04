@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@payjarvis/database";
 import { requireAuth, getKycLevel, getInitialTrustScore } from "../middleware/auth.js";
+import { requireBotAuth } from "../middleware/bot-auth.js";
 import { createAuditLog } from "../services/audit.js";
 import { redisSet, redisDel } from "../services/redis.js";
 import { createHash, randomBytes } from "node:crypto";
@@ -246,6 +247,66 @@ export async function botRoutes(app: FastifyInstance) {
 
     const bot = await prisma.bot.findFirst({
       where: { id: botId, ownerId: user.id },
+      include: { policy: true },
+    });
+    if (!bot) return reply.status(404).send({ success: false, error: "Bot not found" });
+    if (!bot.policy) return reply.status(400).send({ success: false, error: "No policy configured" });
+
+    const policy = bot.policy;
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [dailyResult, weeklyResult, monthlyResult] = await Promise.all([
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfDay } },
+        _sum: { amount: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfWeek } },
+        _sum: { amount: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfMonth } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const spentToday = dailyResult._sum.amount ?? 0;
+    const spentWeek = weeklyResult._sum.amount ?? 0;
+    const spentMonth = monthlyResult._sum.amount ?? 0;
+
+    return {
+      success: true,
+      data: {
+        perTransaction: policy.maxPerTransaction,
+        perDay: policy.maxPerDay,
+        perWeek: policy.maxPerWeek,
+        perMonth: policy.maxPerMonth,
+        autoApproveLimit: policy.autoApproveLimit,
+        spentToday,
+        spentWeek,
+        spentMonth,
+        remainingToday: Math.max(0, policy.maxPerDay - spentToday),
+        remainingWeek: Math.max(0, policy.maxPerWeek - spentWeek),
+        remainingMonth: Math.max(0, policy.maxPerMonth - spentMonth),
+      },
+    };
+  });
+
+  // GET /bots/:botId/limits/sdk — bot-auth variant for agent-sdk
+  app.get("/bots/:botId/limits/sdk", { preHandler: [requireBotAuth] }, async (request, reply) => {
+    const botId = (request as any).botId as string;
+    const { botId: paramBotId } = request.params as { botId: string };
+
+    if (botId !== paramBotId) {
+      return reply.status(403).send({ success: false, error: "API key does not match the requested bot" });
+    }
+
+    const bot = await prisma.bot.findFirst({
+      where: { id: botId },
       include: { policy: true },
     });
     if (!bot) return reply.status(404).send({ success: false, error: "Bot not found" });

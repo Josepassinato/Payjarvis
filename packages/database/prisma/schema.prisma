@@ -73,20 +73,35 @@ enum MerchantStatus {
 // ─── Models ───
 
 model User {
-  id        String     @id @default(cuid())
-  clerkId   String     @unique
-  email     String     @unique
-  fullName  String
-  kycLevel  KycLevel   @default(NONE)
-  status    UserStatus @default(PENDING_KYC)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                  String     @id @default(cuid())
+  clerkId             String     @unique
+  email               String     @unique
+  fullName            String
+  kycLevel            KycLevel   @default(NONE)
+  status              UserStatus @default(PENDING_KYC)
+  telegramChatId      String?
+  notificationChannel String     @default("none") // "none" | "telegram" | "email"
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
 
-  bots             Bot[]
-  transactions     Transaction[]
-  approvalRequests ApprovalRequest[]
+  bots              Bot[]
+  transactions      Transaction[]
+  approvalRequests  ApprovalRequest[]
+  telegramLinkCode  TelegramLinkCode?
 
   @@map("users")
+}
+
+model TelegramLinkCode {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  code      String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("telegram_link_codes")
 }
 
 model Bot {

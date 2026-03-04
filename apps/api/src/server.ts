@@ -11,6 +11,7 @@ import { publicVerifyRoutes } from "./routes/v1/verify.js";
 import { platformRoutes } from "./routes/v1/platform.js";
 import { merchantRoutes } from "./routes/merchant.js";
 import { integrationRoutes } from "./routes/integrations.js";
+import { notificationRoutes } from "./routes/notifications.js";
 
 const app = Fastify({ logger: true });
 
@@ -30,6 +31,7 @@ await app.register(publicVerifyRoutes);
 await app.register(platformRoutes);
 await app.register(merchantRoutes);
 await app.register(integrationRoutes);
+await app.register(notificationRoutes);
 
 // Serve adapter.js for merchant integration
 app.get("/adapter.js", async (request, reply) => {

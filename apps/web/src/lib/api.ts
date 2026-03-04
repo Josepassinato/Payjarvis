@@ -226,6 +226,12 @@ export function respondToApproval(id: string, action: "approve" | "reject", reas
   });
 }
 
+// ── Notifications ──
+
+export function linkTelegram(): Promise<{ code: string; instructions: string }> {
+  return request('/notifications/telegram/link', { method: 'POST' });
+}
+
 // ── Payments ──
 
 export interface PaymentResult {
