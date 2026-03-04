@@ -1,3 +1,28 @@
+// ─── Categories & Enums ───
+
+export type TransactionCategory =
+  | "food"
+  | "travel"
+  | "transport"
+  | "accommodation"
+  | "streaming"
+  | "software"
+  | "shopping"
+  | "health"
+  | "education"
+  | "electronics"
+  | "gambling"
+  | "investment"
+  | "transfer"
+  | "subscription"
+  | "other";
+
+export type KycLevel = 0 | 1 | 2 | 3;
+
+export type Decision = "APPROVED" | "BLOCKED" | "PENDING_HUMAN";
+
+export type BotPlatform = "openclaw" | "chatgpt" | "claude" | "custom";
+
 // ─── BDIT Token Payload ───
 
 export interface BditPayload {
@@ -16,14 +41,21 @@ export interface BditPayload {
   exp: number;
 }
 
-// ─── Decision Engine ───
+export interface BditVerifyResult {
+  valid: boolean;
+  payload?: BditPayload;
+  reason?: string;
+}
 
-export type Decision = "APPROVED" | "BLOCKED" | "PENDING_HUMAN";
+// ─── Decision Engine ───
 
 export interface DecisionResult {
   decision: Decision;
-  reason: string;
-  ruleTriggered: string | null;
+  reason?: string;
+  ruleTriggered?: string;
+  bdtToken?: string;
+  approvalId?: string;
+  transactionId?: string;
 }
 
 export interface PaymentRequest {
@@ -34,6 +66,16 @@ export interface PaymentRequest {
   amount: number;
   currency: string;
   category: string;
+}
+
+export interface RequestPaymentInput {
+  merchantId: string;
+  merchantName: string;
+  amount: number;
+  currency?: string;
+  category: TransactionCategory;
+  description?: string;
+  sessionId: string;
 }
 
 // ─── Policy ───
@@ -133,3 +175,14 @@ export interface RuleEvaluation {
   passed: boolean;
   reason: string;
 }
+
+// ─── Trust Score Events ───
+
+export type TrustScoreEvent =
+  | "approved_auto"
+  | "approved_human"
+  | "blocked_limit"
+  | "blocked_category"
+  | "blocked_merchant"
+  | "approval_expired"
+  | "suspicious";

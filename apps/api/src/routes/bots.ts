@@ -236,6 +236,65 @@ export async function botRoutes(app: FastifyInstance) {
     return { success: true, message: "Bot deleted" };
   });
 
+  // GET /bots/:botId/limits — check spending limits (bot-auth or user-auth)
+  app.get("/bots/:botId/limits", { preHandler: [requireAuth] }, async (request, reply) => {
+    const userId = (request as any).userId as string;
+    const { botId } = request.params as { botId: string };
+
+    const user = await prisma.user.findUnique({ where: { clerkId: userId } });
+    if (!user) return reply.status(404).send({ success: false, error: "User not found" });
+
+    const bot = await prisma.bot.findFirst({
+      where: { id: botId, ownerId: user.id },
+      include: { policy: true },
+    });
+    if (!bot) return reply.status(404).send({ success: false, error: "Bot not found" });
+    if (!bot.policy) return reply.status(400).send({ success: false, error: "No policy configured" });
+
+    const policy = bot.policy;
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [dailyResult, weeklyResult, monthlyResult] = await Promise.all([
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfDay } },
+        _sum: { amount: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfWeek } },
+        _sum: { amount: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { botId, decision: "APPROVED", createdAt: { gte: startOfMonth } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const spentToday = dailyResult._sum.amount ?? 0;
+    const spentWeek = weeklyResult._sum.amount ?? 0;
+    const spentMonth = monthlyResult._sum.amount ?? 0;
+
+    return {
+      success: true,
+      data: {
+        perTransaction: policy.maxPerTransaction,
+        perDay: policy.maxPerDay,
+        perWeek: policy.maxPerWeek,
+        perMonth: policy.maxPerMonth,
+        autoApproveLimit: policy.autoApproveLimit,
+        spentToday,
+        spentWeek,
+        spentMonth,
+        remainingToday: Math.max(0, policy.maxPerDay - spentToday),
+        remainingWeek: Math.max(0, policy.maxPerWeek - spentWeek),
+        remainingMonth: Math.max(0, policy.maxPerMonth - spentMonth),
+      },
+    };
+  });
+
   // KYC: Update user KYC level
   app.patch("/users/kyc", { preHandler: [requireAuth] }, async (request, reply) => {
     const userId = (request as any).userId as string;
