@@ -4,6 +4,7 @@ export interface BditPayload {
   bot_id: string;
   owner_id: string;
   trust_score: number;
+  kyc_level: number;
   categories: string[];
   max_amount: number;
   merchant_id: string;
@@ -82,6 +83,7 @@ export interface TransactionFilters {
   dateFrom?: string;
   dateTo?: string;
   decision?: Decision;
+  category?: string;
 }
 
 // ─── Approval Response ───

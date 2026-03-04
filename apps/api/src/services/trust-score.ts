@@ -26,6 +26,7 @@ export function getScoreDelta(decision: string, ruleTriggered: string | null, ap
     if (ruleTriggered === "checkCategory") return SCORE_DELTAS.blocked_category;
     if (ruleTriggered === "checkMerchant") return SCORE_DELTAS.blocked_merchant;
     if (ruleTriggered === "checkTimeWindow") return SCORE_DELTAS.blocked_anomaly;
+    if (ruleTriggered === "approval_timeout") return -1.0; // Expiration penalty
     return SCORE_DELTAS.blocked_limit;
   }
 
@@ -62,7 +63,7 @@ export async function updateTrustScore(
   await createAuditLog({
     entityType: "bot",
     entityId: botId,
-    action: "TRUST_SCORE_UPDATE",
+    action: "trust_score.changed",
     actorType: "system",
     actorId,
     payload: {
@@ -74,6 +75,17 @@ export async function updateTrustScore(
       suspended,
     },
   });
+
+  if (suspended && bot.status === "ACTIVE") {
+    await createAuditLog({
+      entityType: "bot",
+      entityId: botId,
+      action: "bot.suspended",
+      actorType: "system",
+      actorId,
+      payload: { reason: "trust_score_below_threshold", trustScore: newScore },
+    });
+  }
 
   return { newScore, suspended };
 }

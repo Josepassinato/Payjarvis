@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { getApprovals, respondToApproval } from "@/lib/api";
 import type { Approval } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -28,7 +28,7 @@ function Countdown({ expiresAt }: { expiresAt: string }) {
 
   const diff = new Date(expiresAt).getTime() - Date.now();
   const isExpired = diff <= 0;
-  const isUrgent = diff > 0 && diff < 5 * 60 * 1000;
+  const isUrgent = diff > 0 && diff < 2 * 60 * 1000;
 
   return (
     <span className={`font-mono text-sm ${isExpired ? "text-gray-500" : isUrgent ? "text-blocked" : "text-pending"}`}>
@@ -37,12 +37,26 @@ function Countdown({ expiresAt }: { expiresAt: string }) {
   );
 }
 
+function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  useEffect(() => {
+    const id = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(id);
+  }, [onDismiss]);
+
+  return (
+    <div className="fixed bottom-6 right-6 bg-surface-card border border-blocked/30 rounded-xl px-5 py-3 shadow-lg z-50 animate-pulse">
+      <p className="text-sm text-blocked">{message}</p>
+    </div>
+  );
+}
+
 export default function ApprovalsPage() {
   const { data: approvals, loading, error, refetch } = useApi<Approval[]>(() => getApprovals());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionTaken, setActionTaken] = useState<Record<string, "approved" | "rejected">>({});
+  const [toast, setToast] = useState<string | null>(null);
 
-  // SSE real-time updates + fallback polling every 30s
+  // SSE real-time updates + expiration handling + fallback polling
   useEffect(() => {
     const pollId = setInterval(() => refetch(), 30000);
 
@@ -52,6 +66,13 @@ export default function ApprovalsPage() {
       es = new EventSource(`${apiUrl}/approvals/stream`);
       es.addEventListener("approval_created", () => refetch());
       es.addEventListener("approval_responded", () => refetch());
+      es.addEventListener("approval_expired", (event) => {
+        refetch();
+        try {
+          const data = JSON.parse(event.data);
+          setToast("Aprovação expirada — compra bloqueada automaticamente");
+        } catch {}
+      });
       es.onerror = () => {
         es?.close();
         es = null;
@@ -65,6 +86,25 @@ export default function ApprovalsPage() {
       es?.close();
     };
   }, [refetch]);
+
+  // Client-side expiration check — auto-remove expired approvals from display
+  useEffect(() => {
+    if (!approvals || approvals.length === 0) return;
+
+    const checkExpired = () => {
+      const now = Date.now();
+      for (const a of approvals) {
+        if (new Date(a.expiresAt).getTime() < now && !actionTaken[a.id]) {
+          setToast("Aprovação expirada — compra bloqueada automaticamente");
+          refetch();
+          return;
+        }
+      }
+    };
+
+    const id = setInterval(checkExpired, 5000);
+    return () => clearInterval(id);
+  }, [approvals, actionTaken, refetch]);
 
   const handleAction = async (id: string, action: "approve" | "reject") => {
     setActionLoading(id);
@@ -86,6 +126,8 @@ export default function ApprovalsPage() {
 
   return (
     <div>
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
+
       <div className="mb-8">
         <h2 className="text-2xl font-bold text-white">Aprovações Pendentes</h2>
         <p className="text-sm text-gray-500 mt-1">
@@ -161,7 +203,7 @@ export default function ApprovalsPage() {
 
                 {expired && !taken && (
                   <div className="mt-4 pt-3 border-t border-surface-border">
-                    <p className="text-sm font-medium text-gray-500">Expirado</p>
+                    <p className="text-sm font-medium text-gray-500">Expirado — compra bloqueada</p>
                   </div>
                 )}
               </div>

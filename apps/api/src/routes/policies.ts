@@ -25,7 +25,7 @@ export async function policyRoutes(app: FastifyInstance) {
     await createAuditLog({
       entityType: "policy",
       entityId: policy.id,
-      action: "UPSERT",
+      action: "policy.updated",
       actorType: "user",
       actorId: user.id,
       payload: policyData,
@@ -72,7 +72,7 @@ export async function policyRoutes(app: FastifyInstance) {
     await createAuditLog({
       entityType: "policy",
       entityId: policy.id,
-      action: "UPDATE",
+      action: "policy.updated",
       actorType: "user",
       actorId: user.id,
       payload: updates,
@@ -98,7 +98,7 @@ export async function policyRoutes(app: FastifyInstance) {
     await createAuditLog({
       entityType: "policy",
       entityId: botId,
-      action: "DELETE",
+      action: "policy.deleted",
       actorType: "user",
       actorId: user.id,
       ipAddress: request.ip,

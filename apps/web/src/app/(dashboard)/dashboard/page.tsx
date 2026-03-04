@@ -1,7 +1,7 @@
 "use client";
 
 import { getBots, getTransactions } from "@/lib/api";
-import type { Bot, Transaction } from "@/lib/api";
+import type { Bot, Transaction, PaginatedResult } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { StatCard } from "@/components/stat-card";
 import { DecisionBadge } from "@/components/decision-badge";
@@ -10,14 +10,14 @@ import { currency, shortDate } from "@/lib/format";
 
 export default function DashboardPage() {
   const bots = useApi<Bot[]>(() => getBots());
-  const txs = useApi<Transaction[]>(() => getTransactions());
+  const txs = useApi<PaginatedResult<Transaction>>(() => getTransactions({ limit: 100 }));
 
   if (bots.loading || txs.loading) return <LoadingSpinner />;
   if (bots.error) return <ErrorBox message={bots.error} onRetry={bots.refetch} />;
   if (txs.error) return <ErrorBox message={txs.error} onRetry={txs.refetch} />;
 
   const allBots = bots.data ?? [];
-  const allTxs = txs.data ?? [];
+  const allTxs = txs.data?.data ?? [];
 
   const activeBots = allBots.filter((b) => b.status === "ACTIVE").length;
   const now = new Date();

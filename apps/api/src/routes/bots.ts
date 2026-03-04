@@ -1,11 +1,29 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@payjarvis/database";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, getKycLevel, getInitialTrustScore } from "../middleware/auth.js";
 import { createAuditLog } from "../services/audit.js";
+import { redisSet, redisDel } from "../services/redis.js";
 import { createHash, randomBytes } from "node:crypto";
 
+// Default policy created with every new bot
+const DEFAULT_POLICY = {
+  maxPerTransaction: 50,
+  maxPerDay: 200,
+  maxPerWeek: 500,
+  maxPerMonth: 2000,
+  autoApproveLimit: 50,
+  requireApprovalUp: 200,
+  allowedDays: [1, 2, 3, 4, 5], // Mon-Fri
+  allowedHoursStart: 6,
+  allowedHoursEnd: 22,
+  allowedCategories: [],
+  blockedCategories: [],
+  merchantWhitelist: [],
+  merchantBlacklist: [],
+};
+
 export async function botRoutes(app: FastifyInstance) {
-  // Create bot
+  // Create bot + auto-create policy with defaults
   app.post("/bots", { preHandler: [requireAuth] }, async (request, reply) => {
     const userId = (request as any).userId as string;
     const { name, platform } = request.body as { name: string; platform: string };
@@ -16,27 +34,50 @@ export async function botRoutes(app: FastifyInstance) {
     const apiKey = `pj_bot_${randomBytes(32).toString("hex")}`;
     const apiKeyHash = createHash("sha256").update(apiKey).digest("hex");
 
+    // Initial trust score based on user KYC level
+    const kycLevelNum = getKycLevel(user.kycLevel);
+    const initialTrustScore = getInitialTrustScore(kycLevelNum);
+
     const bot = await prisma.bot.create({
       data: {
         name,
         platform: platform as any,
         ownerId: user.id,
         apiKeyHash,
+        trustScore: initialTrustScore,
+      },
+    });
+
+    // Auto-create default policy
+    const policy = await prisma.policy.create({
+      data: {
+        botId: bot.id,
+        ...DEFAULT_POLICY,
       },
     });
 
     await createAuditLog({
       entityType: "bot",
       entityId: bot.id,
-      action: "CREATE",
+      action: "bot.created",
       actorType: "user",
       actorId: user.id,
+      payload: { name, platform, initialTrustScore, kycLevel: kycLevelNum },
       ipAddress: request.ip,
+    });
+
+    await createAuditLog({
+      entityType: "policy",
+      entityId: policy.id,
+      action: "policy.created",
+      actorType: "system",
+      actorId: user.id,
+      payload: DEFAULT_POLICY,
     });
 
     return reply.status(201).send({
       success: true,
-      data: { ...bot, apiKey }, // Return API key only on creation
+      data: { ...bot, apiKey, policy },
     });
   });
 
@@ -70,7 +111,7 @@ export async function botRoutes(app: FastifyInstance) {
     return { success: true, data: bot };
   });
 
-  // Update bot
+  // Update bot (name/platform)
   app.patch("/bots/:botId", { preHandler: [requireAuth] }, async (request, reply) => {
     const userId = (request as any).userId as string;
     const { botId } = request.params as { botId: string };
@@ -81,7 +122,7 @@ export async function botRoutes(app: FastifyInstance) {
     const existing = await prisma.bot.findFirst({ where: { id: botId, ownerId: user.id } });
     if (!existing) return reply.status(404).send({ success: false, error: "Bot not found" });
 
-    const allowedFields = ["name", "platform", "status"];
+    const allowedFields = ["name", "platform"];
     const filtered: Record<string, unknown> = {};
     for (const key of allowedFields) {
       if (key in updates) filtered[key] = updates[key];
@@ -95,12 +136,77 @@ export async function botRoutes(app: FastifyInstance) {
     await createAuditLog({
       entityType: "bot",
       entityId: bot.id,
-      action: "UPDATE",
+      action: "bot.updated",
       actorType: "user",
       actorId: user.id,
       payload: filtered,
       ipAddress: request.ip,
     });
+
+    return { success: true, data: bot };
+  });
+
+  // Dedicated status endpoint — PATCH /bots/:botId/status
+  app.patch("/bots/:botId/status", { preHandler: [requireAuth] }, async (request, reply) => {
+    const userId = (request as any).userId as string;
+    const { botId } = request.params as { botId: string };
+    const { status } = request.body as { status: string };
+
+    const user = await prisma.user.findUnique({ where: { clerkId: userId } });
+    if (!user) return reply.status(404).send({ success: false, error: "User not found" });
+
+    const existing = await prisma.bot.findFirst({ where: { id: botId, ownerId: user.id } });
+    if (!existing) return reply.status(404).send({ success: false, error: "Bot not found" });
+
+    const normalizedStatus = status.toUpperCase();
+
+    // Validate status transitions
+    if (!["ACTIVE", "PAUSED", "REVOKED"].includes(normalizedStatus)) {
+      return reply.status(400).send({ success: false, error: "Invalid status. Must be: active, paused, or revoked" });
+    }
+
+    if (existing.status === "REVOKED") {
+      return reply.status(400).send({ success: false, error: "Cannot change status of a revoked bot" });
+    }
+
+    if (normalizedStatus === "REVOKED" && existing.status !== "REVOKED") {
+      // Permanent revocation
+    }
+
+    const bot = await prisma.bot.update({
+      where: { id: botId },
+      data: { status: normalizedStatus as any },
+    });
+
+    // Redis revocation tracking
+    if (normalizedStatus === "PAUSED" || normalizedStatus === "REVOKED") {
+      await redisSet(`revoked:bot:${botId}`, "1");
+    } else if (normalizedStatus === "ACTIVE") {
+      await redisDel(`revoked:bot:${botId}`);
+    }
+
+    await createAuditLog({
+      entityType: "bot",
+      entityId: bot.id,
+      action: "bot.status_changed",
+      actorType: "user",
+      actorId: user.id,
+      payload: { previousStatus: existing.status, newStatus: normalizedStatus },
+      ipAddress: request.ip,
+    });
+
+    // Log suspension specifically
+    if (normalizedStatus === "PAUSED" || normalizedStatus === "REVOKED") {
+      await createAuditLog({
+        entityType: "bot",
+        entityId: bot.id,
+        action: normalizedStatus === "REVOKED" ? "bot.revoked" : "bot.suspended",
+        actorType: "user",
+        actorId: user.id,
+        payload: { reason: "manual_action" },
+        ipAddress: request.ip,
+      });
+    }
 
     return { success: true, data: bot };
   });
@@ -115,17 +221,52 @@ export async function botRoutes(app: FastifyInstance) {
     const existing = await prisma.bot.findFirst({ where: { id: botId, ownerId: user.id } });
     if (!existing) return reply.status(404).send({ success: false, error: "Bot not found" });
 
+    // Revoke in Redis before deleting
+    await redisSet(`revoked:bot:${botId}`, "1");
+
     await prisma.bot.delete({ where: { id: botId } });
 
     await createAuditLog({
       entityType: "bot",
       entityId: botId,
-      action: "DELETE",
+      action: "bot.deleted",
       actorType: "user",
       actorId: user.id,
       ipAddress: request.ip,
     });
 
     return { success: true, message: "Bot deleted" };
+  });
+
+  // KYC: Update user KYC level
+  app.patch("/users/kyc", { preHandler: [requireAuth] }, async (request, reply) => {
+    const userId = (request as any).userId as string;
+    const { kycLevel } = request.body as { kycLevel: string };
+
+    const user = await prisma.user.findUnique({ where: { clerkId: userId } });
+    if (!user) return reply.status(404).send({ success: false, error: "User not found" });
+
+    const validLevels = ["NONE", "BASIC", "VERIFIED", "ENHANCED"];
+    const normalized = kycLevel.toUpperCase();
+    if (!validLevels.includes(normalized)) {
+      return reply.status(400).send({ success: false, error: "Invalid KYC level" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: { kycLevel: normalized as any },
+    });
+
+    await createAuditLog({
+      entityType: "user",
+      entityId: user.id,
+      action: "user.kyc_updated",
+      actorType: "user",
+      actorId: user.id,
+      payload: { previousLevel: user.kycLevel, newLevel: normalized },
+      ipAddress: request.ip,
+    });
+
+    return { success: true, data: { kycLevel: updated.kycLevel } };
   });
 }

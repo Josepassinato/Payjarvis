@@ -6,6 +6,7 @@ export interface IssueTokenParams {
   botId: string;
   ownerId: string;
   trustScore: number;
+  kycLevel: number;
   categories: string[];
   maxAmount: number;
   merchantId: string;
@@ -33,6 +34,7 @@ export class BditIssuer {
       bot_id: params.botId,
       owner_id: params.ownerId,
       trust_score: params.trustScore,
+      kyc_level: params.kycLevel,
       categories: params.categories,
       max_amount: params.maxAmount,
       merchant_id: params.merchantId,

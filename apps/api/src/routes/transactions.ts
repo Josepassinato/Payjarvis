@@ -4,35 +4,62 @@ import PDFDocument from "pdfkit";
 import { requireAuth } from "../middleware/auth.js";
 
 export async function transactionRoutes(app: FastifyInstance) {
-  // List transactions with filters
+  // List transactions with filters + pagination
   app.get("/transactions", { preHandler: [requireAuth] }, async (request) => {
     const userId = (request as any).userId as string;
-    const { botId, dateFrom, dateTo, decision } = request.query as {
+    const { botId, dateFrom, dateTo, decision, category, page: pageStr, limit: limitStr } = request.query as {
       botId?: string;
       dateFrom?: string;
       dateTo?: string;
       decision?: string;
+      category?: string;
+      page?: string;
+      limit?: string;
     };
 
     const user = await prisma.user.findUnique({ where: { clerkId: userId } });
     if (!user) return { success: false, error: "User not found" };
 
+    const page = Math.max(1, parseInt(pageStr ?? "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitStr ?? "20", 10) || 20));
+    const skip = (page - 1) * limit;
+
     const where: Record<string, unknown> = { ownerId: user.id };
     if (botId) where.botId = botId;
     if (decision) where.decision = decision;
+    if (category) {
+      // Support multiple categories: ?category=food,travel
+      const categories = category.split(",").map((c) => c.trim()).filter(Boolean);
+      if (categories.length === 1) {
+        where.category = categories[0];
+      } else if (categories.length > 1) {
+        where.category = { in: categories };
+      }
+    }
     if (dateFrom || dateTo) {
       where.createdAt = {};
       if (dateFrom) (where.createdAt as Record<string, unknown>).gte = new Date(dateFrom);
       if (dateTo) (where.createdAt as Record<string, unknown>).lte = new Date(dateTo);
     }
 
-    const transactions = await prisma.transaction.findMany({
-      where: where as any,
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
+    const [transactions, total] = await Promise.all([
+      prisma.transaction.findMany({
+        where: where as any,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.transaction.count({ where: where as any }),
+    ]);
 
-    return { success: true, data: transactions };
+    return {
+      success: true,
+      data: transactions,
+      total,
+      page,
+      limit,
+      pages: Math.ceil(total / limit),
+    };
   });
 
   // Export transactions as PDF
@@ -60,7 +87,6 @@ export async function transactionRoutes(app: FastifyInstance) {
       orderBy: { createdAt: "desc" },
     });
 
-    // Get bot info if filtered
     let botName = "Todos os bots";
     let trustScore: number | null = null;
     if (botId) {

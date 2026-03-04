@@ -24,6 +24,40 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return json.data as T;
 }
 
+async function requestPaginated<T>(path: string, options?: RequestInit): Promise<PaginatedResult<T>> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options?.headers,
+    },
+  });
+
+  const json = await res.json();
+
+  if (!res.ok || json.success === false) {
+    throw new ApiError(res.status, json.error ?? json.message ?? "Request failed");
+  }
+
+  return {
+    data: json.data as T[],
+    total: json.total ?? 0,
+    page: json.page ?? 1,
+    limit: json.limit ?? 20,
+    pages: json.pages ?? 1,
+  };
+}
+
+// ── Pagination ──
+
+export interface PaginatedResult<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
 // ── Bots ──
 
 export interface Bot {
@@ -80,10 +114,17 @@ export function createBot(name: string, platform: string): Promise<CreateBotResu
   });
 }
 
-export function updateBot(id: string, data: Partial<Pick<Bot, "name" | "platform" | "status">>): Promise<Bot> {
+export function updateBot(id: string, data: Partial<Pick<Bot, "name" | "platform">>): Promise<Bot> {
   return request<Bot>(`/bots/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
+  });
+}
+
+export function updateBotStatus(id: string, status: string): Promise<Bot> {
+  return request<Bot>(`/bots/${id}/status`, {
+    method: "PATCH",
+    body: JSON.stringify({ status }),
   });
 }
 
@@ -131,16 +172,22 @@ export interface TransactionFilters {
   dateFrom?: string;
   dateTo?: string;
   decision?: string;
+  category?: string;
+  page?: number;
+  limit?: number;
 }
 
-export function getTransactions(filters?: TransactionFilters): Promise<Transaction[]> {
+export function getTransactions(filters?: TransactionFilters): Promise<PaginatedResult<Transaction>> {
   const params = new URLSearchParams();
   if (filters?.botId) params.set("botId", filters.botId);
   if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom);
   if (filters?.dateTo) params.set("dateTo", filters.dateTo);
   if (filters?.decision) params.set("decision", filters.decision);
+  if (filters?.category) params.set("category", filters.category);
+  if (filters?.page) params.set("page", String(filters.page));
+  if (filters?.limit) params.set("limit", String(filters.limit));
   const qs = params.toString();
-  return request<Transaction[]>(`/transactions${qs ? `?${qs}` : ""}`);
+  return requestPaginated<Transaction>(`/transactions${qs ? `?${qs}` : ""}`);
 }
 
 export function getTransactionsPdfUrl(filters?: TransactionFilters): string {

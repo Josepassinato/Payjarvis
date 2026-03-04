@@ -10,6 +10,9 @@ export interface VerifyResult {
 export class BditVerifier {
   private publicKeyPem?: string;
   private jwksUrl?: string;
+  private jwksCache?: ReturnType<typeof createRemoteJWKSet>;
+  private jwksCacheCreatedAt = 0;
+  private jwksCacheTtlMs: number;
 
   /**
    * Create a verifier using a local public key (no API call needed)
@@ -21,12 +24,26 @@ export class BditVerifier {
   }
 
   /**
-   * Create a verifier using a JWKS endpoint
+   * Create a verifier using a JWKS endpoint with 24h cache
    */
-  static fromJwks(jwksUrl: string): BditVerifier {
+  static fromJwks(jwksUrl: string, cacheTtlMs = 24 * 60 * 60 * 1000): BditVerifier {
     const verifier = new BditVerifier();
     verifier.jwksUrl = jwksUrl;
+    verifier.jwksCacheTtlMs = cacheTtlMs;
     return verifier;
+  }
+
+  private constructor() {
+    this.jwksCacheTtlMs = 24 * 60 * 60 * 1000;
+  }
+
+  private getJwks(): ReturnType<typeof createRemoteJWKSet> {
+    const now = Date.now();
+    if (!this.jwksCache || now - this.jwksCacheCreatedAt > this.jwksCacheTtlMs) {
+      this.jwksCache = createRemoteJWKSet(new URL(this.jwksUrl!));
+      this.jwksCacheCreatedAt = now;
+    }
+    return this.jwksCache;
   }
 
   async verify(token: string): Promise<VerifyResult> {
@@ -40,18 +57,27 @@ export class BditVerifier {
           algorithms: ["RS256"],
         });
       } else if (this.jwksUrl) {
-        const jwks = createRemoteJWKSet(new URL(this.jwksUrl));
-        result = await jwtVerify(token, jwks, {
-          issuer: "payjarvis",
-          algorithms: ["RS256"],
-        });
+        const jwks = this.getJwks();
+        try {
+          result = await jwtVerify(token, jwks, {
+            issuer: "payjarvis",
+            algorithms: ["RS256"],
+          });
+        } catch (err) {
+          // On failure, force-refresh JWKS cache and retry once
+          this.jwksCache = createRemoteJWKSet(new URL(this.jwksUrl));
+          this.jwksCacheCreatedAt = Date.now();
+          result = await jwtVerify(token, this.jwksCache, {
+            issuer: "payjarvis",
+            algorithms: ["RS256"],
+          });
+        }
       } else {
         return { valid: false, error: "No verification key configured" };
       }
 
       const payload = result.payload as unknown as BditPayload;
 
-      // Validate required fields
       if (!payload.bot_id || !payload.jti || !payload.merchant_id) {
         return { valid: false, error: "Missing required BDIT fields" };
       }

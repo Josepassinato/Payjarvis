@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "@payjarvis/database";
 import { BditIssuer } from "@payjarvis/bdit";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, getKycLevel } from "../middleware/auth.js";
 import { createAuditLog } from "../services/audit.js";
 import { updateTrustScore } from "../services/trust-score.js";
+import { redisGet } from "../services/redis.js";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 
@@ -14,11 +15,85 @@ export function emitApprovalEvent(ownerId: string, event: string, data: unknown)
   approvalEvents.emit(`approval:${ownerId}`, { event, data });
 }
 
+/**
+ * Expire pending approvals that have passed their expiresAt.
+ * Runs as a background job every 60 seconds.
+ */
+async function expireApprovals() {
+  try {
+    const expired = await prisma.approvalRequest.findMany({
+      where: {
+        status: "PENDING",
+        expiresAt: { lt: new Date() },
+      },
+      include: { transaction: true },
+    });
+
+    for (const approval of expired) {
+      await prisma.approvalRequest.update({
+        where: { id: approval.id },
+        data: { status: "EXPIRED" },
+      });
+
+      // Update transaction to BLOCKED
+      if (approval.transaction) {
+        await prisma.transaction.update({
+          where: { id: approval.transactionId },
+          data: {
+            decision: "BLOCKED",
+            decisionReason: "Approval expired — auto-blocked",
+          },
+        });
+      }
+
+      // Update bot blocked count
+      await prisma.bot.update({
+        where: { id: approval.botId },
+        data: { totalBlocked: { increment: 1 } },
+      });
+
+      // Trust score penalty for expiration
+      await updateTrustScore(approval.botId, "BLOCKED", "approval_timeout", false, "system");
+
+      await createAuditLog({
+        entityType: "approval",
+        entityId: approval.id,
+        action: "transaction.expired",
+        actorType: "system",
+        actorId: "expiration-job",
+        payload: {
+          transactionId: approval.transactionId,
+          amount: approval.amount,
+          reason: "approval_timeout",
+        },
+      });
+
+      // Emit SSE so frontend removes expired item
+      emitApprovalEvent(approval.ownerId, "approval_expired", {
+        id: approval.id,
+        status: "EXPIRED",
+      });
+    }
+  } catch (err) {
+    console.error("[ExpireJob] Error:", err);
+  }
+}
+
 export async function approvalRoutes(app: FastifyInstance) {
   const issuer = new BditIssuer(
     (process.env.PAYJARVIS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
     process.env.PAYJARVIS_KEY_ID ?? "payjarvis-key-001"
   );
+
+  // Start background expiration job — every 60 seconds
+  const expirationInterval = setInterval(expireApprovals, 60_000);
+  // Run once immediately on startup
+  setTimeout(expireApprovals, 5000);
+
+  // Cleanup on server close
+  app.addHook("onClose", () => {
+    clearInterval(expirationInterval);
+  });
 
   // SSE stream for real-time approval updates
   app.get("/approvals/stream", { preHandler: [requireAuth] }, async (request, reply) => {
@@ -37,21 +112,17 @@ export async function approvalRoutes(app: FastifyInstance) {
       reply.raw.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    // Send initial data
     send("connected", { message: "SSE connected" });
 
-    // Heartbeat every 15s
     const heartbeat = setInterval(() => {
       reply.raw.write(": heartbeat\n\n");
     }, 15000);
 
-    // Listen for approval events for this user
     const listener = (payload: { event: string; data: unknown }) => {
       send(payload.event, payload.data);
     };
     approvalEvents.on(`approval:${user.id}`, listener);
 
-    // Cleanup on disconnect
     request.raw.on("close", () => {
       clearInterval(heartbeat);
       approvalEvents.off(`approval:${user.id}`, listener);
@@ -69,7 +140,7 @@ export async function approvalRoutes(app: FastifyInstance) {
 
     const approval = await prisma.approvalRequest.findFirst({
       where: { id, ownerId: user.id },
-      include: { transaction: true, bot: { include: { policy: true } } },
+      include: { transaction: true, bot: { include: { policy: true, owner: true } } },
     });
 
     if (!approval) return reply.status(404).send({ success: false, error: "Approval request not found" });
@@ -78,11 +149,37 @@ export async function approvalRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: `Approval already ${approval.status}` });
     }
 
+    // Check expiration (lazy check)
     if (new Date() > approval.expiresAt) {
       await prisma.approvalRequest.update({
         where: { id },
         data: { status: "EXPIRED" },
       });
+
+      // Auto-block the transaction
+      await prisma.transaction.update({
+        where: { id: approval.transactionId },
+        data: { decision: "BLOCKED", decisionReason: "Approval expired" },
+      });
+
+      await prisma.bot.update({
+        where: { id: approval.botId },
+        data: { totalBlocked: { increment: 1 } },
+      });
+
+      await updateTrustScore(approval.botId, "BLOCKED", "approval_timeout", false, "system");
+
+      await createAuditLog({
+        entityType: "approval",
+        entityId: id,
+        action: "transaction.expired",
+        actorType: "system",
+        actorId: "lazy-check",
+        payload: { transactionId: approval.transactionId, amount: approval.amount },
+      });
+
+      emitApprovalEvent(user.id, "approval_expired", { id, status: "EXPIRED" });
+
       return reply.status(400).send({ success: false, error: "Approval request has expired" });
     }
 
@@ -93,10 +190,13 @@ export async function approvalRoutes(app: FastifyInstance) {
       });
 
       const policy = approval.bot.policy!;
+      const kycLevelNum = getKycLevel(approval.bot.owner.kycLevel);
+
       const { token, jti, expiresAt } = await issuer.issue({
         botId: approval.botId,
         ownerId: user.id,
         trustScore: approval.bot.trustScore,
+        kycLevel: kycLevelNum,
         categories: policy.allowedCategories,
         maxAmount: policy.maxPerTransaction,
         merchantId: approval.transaction.merchantId ?? "",
@@ -106,13 +206,7 @@ export async function approvalRoutes(app: FastifyInstance) {
       });
 
       await prisma.bditToken.create({
-        data: {
-          jti,
-          botId: approval.botId,
-          amount: approval.amount,
-          category: approval.category,
-          expiresAt,
-        },
+        data: { jti, botId: approval.botId, amount: approval.amount, category: approval.category, expiresAt },
       });
 
       await prisma.transaction.update({
@@ -130,20 +224,27 @@ export async function approvalRoutes(app: FastifyInstance) {
         data: { totalApproved: { increment: 1 } },
       });
 
-      // Update trust score
       await updateTrustScore(approval.botId, "APPROVED", null, true, user.id);
 
       await createAuditLog({
         entityType: "approval",
         entityId: id,
-        action: "APPROVE",
+        action: "approval.responded",
         actorType: "user",
         actorId: user.id,
-        payload: { transactionId: approval.transactionId, amount: approval.amount },
+        payload: { action: "approved", transactionId: approval.transactionId, amount: approval.amount },
         ipAddress: request.ip,
       });
 
-      // Emit SSE event
+      await createAuditLog({
+        entityType: "bdit",
+        entityId: jti,
+        action: "bdit.issued",
+        actorType: "system",
+        actorId: approval.botId,
+        payload: { botId: approval.botId, amount: approval.amount, humanApproved: true },
+      });
+
       emitApprovalEvent(user.id, "approval_responded", {
         id,
         status: "APPROVED",
@@ -179,20 +280,18 @@ export async function approvalRoutes(app: FastifyInstance) {
       data: { totalBlocked: { increment: 1 } },
     });
 
-    // Update trust score
     await updateTrustScore(approval.botId, "BLOCKED", null, false, user.id);
 
     await createAuditLog({
       entityType: "approval",
       entityId: id,
-      action: "REJECT",
+      action: "approval.responded",
       actorType: "user",
       actorId: user.id,
-      payload: { transactionId: approval.transactionId, reason },
+      payload: { action: "rejected", transactionId: approval.transactionId, reason },
       ipAddress: request.ip,
     });
 
-    // Emit SSE event
     emitApprovalEvent(user.id, "approval_responded", {
       id,
       status: "REJECTED",
@@ -205,11 +304,22 @@ export async function approvalRoutes(app: FastifyInstance) {
     };
   });
 
-  // List pending approvals
+  // List pending approvals — with lazy expiration check
   app.get("/approvals", { preHandler: [requireAuth] }, async (request) => {
     const userId = (request as any).userId as string;
     const user = await prisma.user.findUnique({ where: { clerkId: userId } });
     if (!user) return { success: false, error: "User not found" };
+
+    // Lazy-expire any that have passed
+    const now = new Date();
+    await prisma.approvalRequest.updateMany({
+      where: {
+        ownerId: user.id,
+        status: "PENDING",
+        expiresAt: { lt: now },
+      },
+      data: { status: "EXPIRED" },
+    });
 
     const approvals = await prisma.approvalRequest.findMany({
       where: { ownerId: user.id, status: "PENDING" },
