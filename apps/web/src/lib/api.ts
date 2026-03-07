@@ -6,11 +6,24 @@ export class ApiError extends Error {
   }
 }
 
+async function getAuthHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  try {
+    const clerk = (window as any).Clerk;
+    if (clerk?.session) {
+      const token = await clerk.session.getToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+    }
+  } catch {}
+  return headers;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...authHeaders,
       ...options?.headers,
     },
   });
@@ -25,10 +38,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 async function requestPaginated<T>(path: string, options?: RequestInit): Promise<PaginatedResult<T>> {
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...authHeaders,
       ...options?.headers,
     },
   });
