@@ -409,9 +409,10 @@ export async function notificationRoutes(app: FastifyInstance) {
     }
 
     // Handle /link CODE command
+    // Handle /link CODE command
     const linkMatch = text.match(/^\/link\s+(\d{6})$/);
     if (!linkMatch) {
-      await sendTelegramNotification(chatId, "Comando não reconhecido. Use /link CÓDIGO para vincular sua conta.");
+      // Text messages are handled by OpenClaw (polling). PayJarvis only handles callbacks.
       return reply.send({ ok: true });
     }
 

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@clerk/nextjs";
 import { createBot, upsertPolicy, linkTelegram } from "@/lib/api";
 import type { CreateBotResult } from "@/lib/api";
 
@@ -16,6 +18,8 @@ const platforms = [
 type Step = 1 | 2 | 3 | 4;
 
 export default function NewBotPage() {
+  const { t } = useTranslation();
+  const { getToken } = useAuth();
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
   const [error, setError] = useState<string | null>(null);
@@ -49,12 +53,13 @@ export default function NewBotPage() {
   const handleLinkTelegram = async () => {
     setLinkingTelegram(true);
     try {
-      const result = await linkTelegram();
+      const token = await getToken();
+      const result = await linkTelegram(token);
       setLinkCode(result.code);
       setLinkInstructions(result.instructions);
       setTelegramEnabled(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao gerar código");
+      setError(err instanceof Error ? err.message : t("newBot.failedTelegram"));
     } finally {
       setLinkingTelegram(false);
     }
@@ -65,9 +70,9 @@ export default function NewBotPage() {
     setCreating(true);
     setError(null);
     try {
-      const result = await createBot(name.trim(), platform);
+      const token = await getToken();
+      const result = await createBot(name.trim(), platform, token);
 
-      // Update policy with wizard values — if this fails, bot still has default policy
       try {
         await upsertPolicy(result.id, {
           maxPerTransaction: maxPerPurchase,
@@ -76,15 +81,15 @@ export default function NewBotPage() {
           maxPerMonth: dailyLimit * 25,
           autoApproveLimit: autoApprove,
           requireApprovalUp: maxPerPurchase,
-        });
+        }, token);
       } catch {
-        // Bot created with default policy — user can adjust in detail page
+        // Bot created with default policy
       }
 
       setCreatedBot(result);
       setStep(4);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha ao criar bot");
+      setError(err instanceof Error ? err.message : t("newBot.failedCreate"));
     } finally {
       setCreating(false);
     }
@@ -96,15 +101,14 @@ export default function NewBotPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Step indicators
-  const steps = ["Nome e plataforma", "Limites de gasto", "Notificações", "Pronto!"];
+  const steps = [t("newBot.step1"), t("newBot.step2"), t("newBot.step3"), t("newBot.step4")];
 
   return (
     <div className="max-w-xl mx-auto mt-12">
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-8">
         {steps.map((label, i) => (
-          <div key={label} className="flex items-center gap-2">
+          <div key={i} className="flex items-center gap-2">
             <div
               className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
                 i + 1 === step
@@ -130,24 +134,24 @@ export default function NewBotPage() {
         </div>
       )}
 
-      {/* Step 1: Nome e plataforma */}
+      {/* Step 1 */}
       {step === 1 && (
         <div className="bg-surface-card border border-surface-border rounded-xl p-6 space-y-4">
-          <h2 className="text-xl font-bold text-white">Nome e plataforma</h2>
-          <p className="text-sm text-gray-500">Como seu bot se chama e onde ele opera?</p>
+          <h2 className="text-xl font-bold text-white">{t("newBot.nameTitle")}</h2>
+          <p className="text-sm text-gray-500">{t("newBot.nameDesc")}</p>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Nome do Bot</label>
+            <label className="block text-xs text-gray-500 mb-1">{t("newBot.botName")}</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ex: Meu Agente de Compras"
+              placeholder={t("newBot.botNamePlaceholder")}
               className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand-500"
               autoFocus
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Plataforma</label>
+            <label className="block text-xs text-gray-500 mb-1">{t("newBot.platform")}</label>
             <select
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
@@ -164,21 +168,21 @@ export default function NewBotPage() {
               disabled={!name.trim()}
               className="px-6 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors disabled:opacity-50"
             >
-              Próximo
+              {t("common.next")}
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 2: Limites de gasto */}
+      {/* Step 2 */}
       {step === 2 && (
         <div className="bg-surface-card border border-surface-border rounded-xl p-6 space-y-5">
-          <h2 className="text-xl font-bold text-white">Limites de gasto</h2>
-          <p className="text-sm text-gray-500">Defina quanto seu bot pode gastar.</p>
+          <h2 className="text-xl font-bold text-white">{t("newBot.limitsTitle")}</h2>
+          <p className="text-sm text-gray-500">{t("newBot.limitsDesc")}</p>
 
           <div>
             <div className="flex justify-between mb-1">
-              <label className="text-xs text-gray-500">Máx por compra</label>
+              <label className="text-xs text-gray-500">{t("newBot.maxPerPurchase")}</label>
               <span className="text-xs text-white font-medium">${maxPerPurchase}</span>
             </div>
             <input
@@ -197,7 +201,7 @@ export default function NewBotPage() {
 
           <div>
             <div className="flex justify-between mb-1">
-              <label className="text-xs text-gray-500">Limite diário</label>
+              <label className="text-xs text-gray-500">{t("newBot.dailyLimit")}</label>
               <span className="text-xs text-white font-medium">${dailyLimit}</span>
             </div>
             <input
@@ -217,7 +221,7 @@ export default function NewBotPage() {
 
           <div>
             <div className="flex justify-between mb-1">
-              <label className="text-xs text-gray-500">Auto-aprovar até</label>
+              <label className="text-xs text-gray-500">{t("newBot.autoApproveUpTo")}</label>
               <span className="text-xs text-white font-medium">${autoApprove}</span>
             </div>
             <input
@@ -236,38 +240,38 @@ export default function NewBotPage() {
 
           {autoApprove > maxPerPurchase && (
             <div className="rounded-lg bg-pending/10 border border-pending/20 px-3 py-2 text-xs text-pending">
-              Auto-aprovar (${autoApprove}) não pode ser maior que máx por compra (${maxPerPurchase}).
+              {t("newBot.autoApproveWarning", { auto: autoApprove, max: maxPerPurchase })}
             </div>
           )}
 
           <div className="rounded-lg bg-surface p-3 text-xs text-gray-400 space-y-1">
-            <p>Semanal: <span className="text-white">${(dailyLimit * 5).toLocaleString()}</span></p>
-            <p>Mensal: <span className="text-white">${(dailyLimit * 25).toLocaleString()}</span></p>
-            <p>Aprovação humana: <span className="text-white">${autoApprove} — ${maxPerPurchase}</span></p>
-            <p>Bloqueado: <span className="text-white">acima de ${maxPerPurchase}</span></p>
+            <p>{t("newBot.weekly")}: <span className="text-white">${(dailyLimit * 5).toLocaleString()}</span></p>
+            <p>{t("newBot.monthly")}: <span className="text-white">${(dailyLimit * 25).toLocaleString()}</span></p>
+            <p>{t("newBot.humanApproval")}: <span className="text-white">${autoApprove} — ${maxPerPurchase}</span></p>
+            <p>{t("newBot.blocked")}: <span className="text-white">{t("common.above")} ${maxPerPurchase}</span></p>
           </div>
 
           <div className="flex justify-between pt-2">
             <button onClick={handleBack} className="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors">
-              Voltar
+              {t("common.back")}
             </button>
             <button
               onClick={handleNext}
               disabled={autoApprove > maxPerPurchase}
               className="px-6 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors disabled:opacity-50"
             >
-              Próximo
+              {t("common.next")}
             </button>
           </div>
         </div>
       )}
 
-      {/* Step 3: Notificações */}
+      {/* Step 3 */}
       {step === 3 && (
         <div className="bg-surface-card border border-surface-border rounded-xl p-6 space-y-5">
-          <h2 className="text-xl font-bold text-white">Notificações</h2>
+          <h2 className="text-xl font-bold text-white">{t("newBot.notifTitle")}</h2>
           <p className="text-sm text-gray-500">
-            Receba alertas no Telegram quando compras precisarem de aprovação.
+            {t("newBot.notifDesc")}
           </p>
 
           {!linkCode ? (
@@ -277,13 +281,13 @@ export default function NewBotPage() {
                 disabled={linkingTelegram}
                 className="w-full py-3 bg-[#0088cc] text-white text-sm font-medium rounded-lg hover:bg-[#0077b5] transition-colors disabled:opacity-50"
               >
-                {linkingTelegram ? "Gerando código..." : "Conectar Telegram"}
+                {linkingTelegram ? t("newBot.generatingCode") : t("newBot.connectTelegram")}
               </button>
             </div>
           ) : (
             <div className="space-y-3">
               <div className="rounded-lg bg-[#0088cc]/10 border border-[#0088cc]/20 p-4 text-center">
-                <p className="text-xs text-gray-400 mb-2">Seu código de vinculação:</p>
+                <p className="text-xs text-gray-400 mb-2">{t("newBot.linkCode")}</p>
                 <p className="text-3xl font-mono font-bold text-white tracking-widest">{linkCode}</p>
               </div>
               <p className="text-xs text-gray-400">{linkInstructions}</p>
@@ -292,38 +296,38 @@ export default function NewBotPage() {
 
           <div className="flex justify-between pt-2">
             <button onClick={handleBack} className="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors">
-              Voltar
+              {t("common.back")}
             </button>
             <div className="flex gap-2">
               <button
                 onClick={() => handleCreateBot()}
                 className="px-4 py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
               >
-                Pular
+                {t("common.skip")}
               </button>
               <button
                 onClick={handleCreateBot}
                 disabled={creating}
                 className="px-6 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors disabled:opacity-50"
               >
-                {creating ? "Criando..." : "Criar Bot"}
+                {creating ? t("newBot.creating") : t("newBot.createBot")}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Step 4: Pronto! */}
+      {/* Step 4 */}
       {step === 4 && createdBot && (
         <div className="bg-surface-card border border-approved/30 rounded-xl p-6 space-y-4">
-          <h2 className="text-xl font-bold text-approved">Pronto!</h2>
+          <h2 className="text-xl font-bold text-approved">{t("newBot.doneTitle")}</h2>
           <p className="text-sm text-gray-400">
-            <span className="text-white font-medium">{createdBot.name}</span> foi criado com sucesso.
+            <span className="text-white font-medium">{createdBot.name}</span> {t("newBot.doneDesc", { name: "" }).trim()}
           </p>
 
           <div>
             <label className="block text-xs font-semibold text-blocked mb-2">
-              Sua API Key — Não será exibida novamente
+              {t("newBot.apiKeyWarning")}
             </label>
             <div className="flex items-center gap-2 bg-surface rounded-lg p-3 border border-surface-border">
               <code className="flex-1 text-xs text-white font-mono break-all select-all">
@@ -335,13 +339,13 @@ export default function NewBotPage() {
                   copied ? "bg-approved/20 text-approved" : "bg-surface-hover text-gray-400 hover:text-white"
                 }`}
               >
-                {copied ? "Copiado!" : "Copiar"}
+                {copied ? t("common.copied") : t("common.copy")}
               </button>
             </div>
           </div>
 
           <div>
-            <label className="block text-xs text-gray-500 mb-2">Instale no seu agente:</label>
+            <label className="block text-xs text-gray-500 mb-2">{t("newBot.installLabel")}</label>
             <pre className="bg-surface rounded-lg p-3 border border-surface-border text-xs text-gray-300 overflow-x-auto">
               <code>{`import { PayJarvis } from "@payjarvis/agent-sdk";
 
@@ -350,11 +354,17 @@ const pj = new PayJarvis({
   botId: "${createdBot.id}",
 });
 
-const decision = await pj.requestApproval({
-  merchant: "Store Name",
-  amount: 49.99,
+const decision = await pj.requestPayment({
+  merchantName: "Amazon",
+  amount: 29.99,
+  currency: "USD",
   category: "shopping",
-});`}</code>
+});
+
+if (decision.approved) {
+  // BDIT token em decision.bditToken
+  // Apresente ao merchant no checkout
+}`}</code>
             </pre>
           </div>
 
@@ -362,7 +372,7 @@ const decision = await pj.requestApproval({
             onClick={() => router.push(`/bots/${createdBot.id}`)}
             className="w-full py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors"
           >
-            Ir para dashboard do bot
+            {t("newBot.goToDashboard")}
           </button>
         </div>
       )}

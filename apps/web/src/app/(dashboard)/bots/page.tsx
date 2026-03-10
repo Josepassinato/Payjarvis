@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@clerk/nextjs";
 import { getBots, updateBotStatus } from "@/lib/api";
 import type { Bot } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -13,24 +15,28 @@ const statusStyles: Record<string, string> = {
   PAUSED: "bg-pending/10 text-pending",
   REVOKED: "bg-blocked/10 text-blocked",
 };
-const statusLabels: Record<string, string> = {
-  ACTIVE: "Ativo",
-  PAUSED: "Pausado",
-  REVOKED: "Revogado",
-};
 
 export default function BotsPage() {
-  const { data: bots, loading, error, refetch } = useApi<Bot[]>(() => getBots());
+  const { t } = useTranslation();
+  const { getToken } = useAuth();
+  const { data: bots, loading, error, refetch } = useApi<Bot[]>((token) => getBots(token));
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
+  const statusLabels: Record<string, string> = {
+    ACTIVE: t("bots.statusActive"),
+    PAUSED: t("bots.statusPaused"),
+    REVOKED: t("bots.statusRevoked"),
+  };
+
   const handleStatusChange = async (bot: Bot, newStatus: string) => {
-    if (newStatus === "REVOKED" && !confirm(`Revogar bot "${bot.name}"? Essa ação é irreversível.`)) return;
+    if (newStatus === "REVOKED" && !confirm(t("bots.revokeConfirm", { name: bot.name }))) return;
     setActionLoading(bot.id);
     try {
-      await updateBotStatus(bot.id, newStatus);
+      const token = await getToken();
+      await updateBotStatus(bot.id, newStatus, token);
       refetch();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Falha ao atualizar status");
+      alert(err instanceof Error ? err.message : t("bots.failedUpdate"));
     } finally {
       setActionLoading(null);
     }
@@ -41,23 +47,23 @@ export default function BotsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 md:mb-8">
         <div>
-          <h2 className="text-2xl font-bold text-white">Bots</h2>
-          <p className="text-sm text-gray-500 mt-1">{(bots ?? []).length} bot(s) registrado(s)</p>
+          <h2 className="text-2xl font-bold text-white">{t("bots.title")}</h2>
+          <p className="text-sm text-gray-500 mt-1">{t("bots.count", { count: (bots ?? []).length })}</p>
         </div>
         <Link
           href="/bots/new"
           className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors"
         >
-          + Novo Bot
+          {t("bots.newBot")}
         </Link>
       </div>
 
       {(bots ?? []).length === 0 ? (
         <div className="bg-surface-card border border-surface-border rounded-xl p-12 text-center">
-          <p className="text-gray-400">Nenhum bot registrado</p>
-          <p className="text-xs text-gray-600 mt-1">Clique em "+ Novo Bot" para começar</p>
+          <p className="text-gray-400">{t("bots.noBots")}</p>
+          <p className="text-xs text-gray-600 mt-1">{t("bots.noBotsHint")}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -76,24 +82,24 @@ export default function BotsPage() {
               </div>
 
               <div className="mb-4">
-                <p className="text-xs text-gray-500 mb-1.5">Trust Score</p>
+                <p className="text-xs text-gray-500 mb-1.5">{t("bots.trustScore")}</p>
                 <TrustBar score={bot.trustScore} />
               </div>
 
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <div>
-                  <p className="text-xs text-gray-500">Aprovadas</p>
+                  <p className="text-xs text-gray-500">{t("decisions.approved")}</p>
                   <p className="text-sm font-mono text-approved">{bot.totalApproved}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-500">Bloqueadas</p>
+                  <p className="text-xs text-gray-500">{t("decisions.blocked")}</p>
                   <p className="text-sm font-mono text-blocked">{bot.totalBlocked}</p>
                 </div>
               </div>
 
               <div className="flex gap-2 pt-3 border-t border-surface-border">
                 <Link href={`/bots/${bot.id}`} className="px-3 py-1.5 text-xs text-brand-400 bg-brand-600/10 rounded hover:bg-brand-600/20 transition-colors">
-                  Configurar
+                  {t("common.configure")}
                 </Link>
                 {bot.status === "ACTIVE" && (
                   <button
@@ -101,7 +107,7 @@ export default function BotsPage() {
                     disabled={actionLoading === bot.id}
                     className="px-3 py-1.5 text-xs text-pending bg-pending/10 rounded hover:bg-pending/20 transition-colors disabled:opacity-50"
                   >
-                    Pausar
+                    {t("bots.pause")}
                   </button>
                 )}
                 {bot.status === "PAUSED" && (
@@ -110,7 +116,7 @@ export default function BotsPage() {
                     disabled={actionLoading === bot.id}
                     className="px-3 py-1.5 text-xs text-approved bg-approved/10 rounded hover:bg-approved/20 transition-colors disabled:opacity-50"
                   >
-                    Reativar
+                    {t("bots.reactivate")}
                   </button>
                 )}
                 {bot.status !== "REVOKED" && (
@@ -119,7 +125,7 @@ export default function BotsPage() {
                     disabled={actionLoading === bot.id}
                     className="px-3 py-1.5 text-xs text-blocked bg-blocked/10 rounded hover:bg-blocked/20 transition-colors disabled:opacity-50"
                   >
-                    Revogar
+                    {t("bots.revoke")}
                   </button>
                 )}
               </div>

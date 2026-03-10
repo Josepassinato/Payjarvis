@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getBots, getTransactions, getTransactionsPdfUrl } from "@/lib/api";
 import type { Bot, Transaction, TransactionFilters, PaginatedResult } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -9,20 +10,22 @@ import { LoadingSpinner, ErrorBox } from "@/components/loading";
 import { currency, shortDate } from "@/lib/format";
 
 const decisionOptions = ["", "APPROVED", "BLOCKED", "PENDING_HUMAN"];
-const decisionLabels: Record<string, string> = {
-  "": "Todas decisões",
-  APPROVED: "Aprovadas",
-  BLOCKED: "Bloqueadas",
-  PENDING_HUMAN: "Pendentes",
-};
 
 export default function TransactionsPage() {
+  const { t } = useTranslation();
   const [botFilter, setBotFilter] = useState("");
   const [decisionFilter, setDecisionFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [page, setPage] = useState(1);
+
+  const decisionLabels: Record<string, string> = {
+    "": t("transactions.allDecisions"),
+    APPROVED: t("decisions.approved"),
+    BLOCKED: t("decisions.blocked"),
+    PENDING_HUMAN: t("decisions.pending"),
+  };
 
   const filters: TransactionFilters = { page, limit: 20 };
   if (botFilter) filters.botId = botFilter;
@@ -31,9 +34,9 @@ export default function TransactionsPage() {
   if (dateFrom) filters.dateFrom = dateFrom;
   if (dateTo) filters.dateTo = dateTo;
 
-  const bots = useApi<Bot[]>(() => getBots());
+  const bots = useApi<Bot[]>((token) => getBots(token));
   const txs = useApi<PaginatedResult<Transaction>>(
-    () => getTransactions(filters),
+    (token) => getTransactions(filters, token),
     [botFilter, decisionFilter, categoryFilter, dateFrom, dateTo, page]
   );
 
@@ -50,29 +53,29 @@ export default function TransactionsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 md:mb-8">
         <div>
-          <h2 className="text-2xl font-bold text-white">Transações</h2>
+          <h2 className="text-xl md:text-2xl font-bold text-white">{t("transactions.title")}</h2>
           <p className="text-sm text-gray-500 mt-1">
-            {totalItems} transação(ões) no total
+            {t("transactions.count", { count: totalItems })}
           </p>
         </div>
         <button
           onClick={handleExport}
-          className="px-4 py-2.5 bg-surface-card border border-surface-border text-sm text-gray-300 rounded-lg hover:bg-surface-hover transition-colors"
+          className="px-4 py-2.5 bg-surface-card border border-surface-border text-sm text-gray-300 rounded-lg hover:bg-surface-hover transition-colors self-start sm:self-auto"
         >
-          Exportar PDF
+          {t("transactions.exportPdf")}
         </button>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-6">
+      <div className="grid grid-cols-2 md:flex md:flex-wrap gap-2 md:gap-3 mb-6">
         <select
           value={botFilter}
           onChange={(e) => { setBotFilter(e.target.value); setPage(1); }}
           className="bg-surface-card border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500"
         >
-          <option value="">Todos os bots</option>
+          <option value="">{t("transactions.allBots")}</option>
           {(bots.data ?? []).map((b) => (
             <option key={b.id} value={b.id}>{b.name}</option>
           ))}
@@ -90,8 +93,8 @@ export default function TransactionsPage() {
           type="text"
           value={categoryFilter}
           onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
-          placeholder="Categoria (ex: food,travel)"
-          className="bg-surface-card border border-surface-border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 w-44"
+          placeholder={t("transactions.category")}
+          className="bg-surface-card border border-surface-border rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-brand-500 col-span-2 md:col-span-1 md:w-44"
         />
         <input
           type="date"
@@ -110,47 +113,78 @@ export default function TransactionsPage() {
       {txs.error && <ErrorBox message={txs.error} onRetry={txs.refetch} />}
 
       {!txs.error && (
-        <div className="bg-surface-card border border-surface-border rounded-xl overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-surface-border">
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Bot</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Merchant</th>
-                <th className="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Valor</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
-                <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Decisão</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {transactions.map((tx) => {
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block bg-surface-card border border-surface-border rounded-xl overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.date")}</th>
+                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.bot")}</th>
+                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.merchant")}</th>
+                  <th className="text-right px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.amount")}</th>
+                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.category")}</th>
+                  <th className="text-left px-5 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">{t("transactions.decision")}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {transactions.map((tx) => {
+                  const botName = (bots.data ?? []).find((b) => b.id === tx.botId)?.name ?? tx.botId.slice(0, 8);
+                  return (
+                    <tr key={tx.id} className="hover:bg-surface-hover transition-colors">
+                      <td className="px-5 py-3.5 text-sm text-gray-400">{shortDate(tx.createdAt)}</td>
+                      <td className="px-5 py-3.5 text-sm text-white">{botName}</td>
+                      <td className="px-5 py-3.5 text-sm text-gray-300">{tx.merchantName}</td>
+                      <td className="px-5 py-3.5 text-sm font-mono text-right text-white">{currency(tx.amount, tx.currency)}</td>
+                      <td className="px-5 py-3.5">
+                        <span className="px-2 py-0.5 bg-surface-hover rounded text-xs text-gray-400">{tx.category}</span>
+                      </td>
+                      <td className="px-5 py-3.5"><DecisionBadge decision={tx.decision} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {transactions.length === 0 && (
+              <div className="text-center py-8 text-gray-500 text-sm">{t("transactions.noTx")}</div>
+            )}
+          </div>
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {transactions.length === 0 ? (
+              <div className="bg-surface-card border border-surface-border rounded-xl p-8 text-center text-gray-500 text-sm">
+                {t("transactions.noTx")}
+              </div>
+            ) : (
+              transactions.map((tx) => {
                 const botName = (bots.data ?? []).find((b) => b.id === tx.botId)?.name ?? tx.botId.slice(0, 8);
                 return (
-                  <tr key={tx.id} className="hover:bg-surface-hover transition-colors">
-                    <td className="px-5 py-3.5 text-sm text-gray-400">{shortDate(tx.createdAt)}</td>
-                    <td className="px-5 py-3.5 text-sm text-white">{botName}</td>
-                    <td className="px-5 py-3.5 text-sm text-gray-300">{tx.merchantName}</td>
-                    <td className="px-5 py-3.5 text-sm font-mono text-right text-white">{currency(tx.amount, tx.currency)}</td>
-                    <td className="px-5 py-3.5">
-                      <span className="px-2 py-0.5 bg-surface-hover rounded text-xs text-gray-400">{tx.category}</span>
-                    </td>
-                    <td className="px-5 py-3.5"><DecisionBadge decision={tx.decision} /></td>
-                  </tr>
+                  <div key={tx.id} className="bg-surface-card border border-surface-border rounded-xl p-4">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <p className="text-sm font-medium text-white">{tx.merchantName}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">{botName} &middot; {tx.category}</p>
+                      </div>
+                      <DecisionBadge decision={tx.decision} />
+                    </div>
+                    <div className="flex items-center justify-between mt-3">
+                      <span className="text-xs text-gray-500">{shortDate(tx.createdAt)}</span>
+                      <span className="text-sm font-mono font-semibold text-white">{currency(tx.amount, tx.currency)}</span>
+                    </div>
+                  </div>
                 );
-              })}
-            </tbody>
-          </table>
-          {transactions.length === 0 && (
-            <div className="text-center py-8 text-gray-500 text-sm">Nenhuma transação encontrada</div>
-          )}
-        </div>
+              })
+            )}
+          </div>
+        </>
       )}
 
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-4">
           <p className="text-xs text-gray-500">
-            Página {page} de {totalPages} ({totalItems} transações)
+            {t("transactions.page", { page, total: totalPages, items: totalItems })}
           </p>
           <div className="flex gap-2">
             <button
@@ -158,14 +192,14 @@ export default function TransactionsPage() {
               disabled={page <= 1}
               className="px-3 py-1.5 text-xs bg-surface-card border border-surface-border rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              Anterior
+              {t("common.previous")}
             </button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
               className="px-3 py-1.5 text-xs bg-surface-card border border-surface-border rounded-lg text-gray-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
             >
-              Próximo
+              {t("common.next")}
             </button>
           </div>
         </div>

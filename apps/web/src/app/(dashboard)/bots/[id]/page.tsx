@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@clerk/nextjs";
 import { getBot, upsertPolicy, linkTelegram } from "@/lib/api";
 import type { Bot, Policy } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -25,10 +27,10 @@ const defaultPolicy: PolicyForm = {
   merchantBlacklist: [],
 };
 
-const dayNames = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
-
 export default function BotDetailPage({ params }: { params: { id: string } }) {
-  const { data: bot, loading, error, refetch } = useApi<Bot>(() => getBot(params.id), [params.id]);
+  const { t } = useTranslation();
+  const { getToken } = useAuth();
+  const { data: bot, loading, error, refetch } = useApi<Bot>((token) => getBot(params.id, token), [params.id]);
   const [policy, setPolicy] = useState<PolicyForm>(defaultPolicy);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -39,10 +41,11 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
   const [newWhitelist, setNewWhitelist] = useState("");
   const [newBlacklist, setNewBlacklist] = useState("");
 
-  // Telegram state
   const [telegramLinking, setTelegramLinking] = useState(false);
   const [linkCode, setLinkCode] = useState<string | null>(null);
   const [linkInstructions, setLinkInstructions] = useState<string | null>(null);
+
+  const dayNames = [t("days.sun"), t("days.mon"), t("days.tue"), t("days.wed"), t("days.thu"), t("days.fri"), t("days.sat")];
 
   useEffect(() => {
     if (bot?.policy) {
@@ -88,12 +91,13 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
     setSaving(true);
     setSaveError(null);
     try {
-      await upsertPolicy(bot.id, policy);
+      const token = await getToken();
+      await upsertPolicy(bot.id, policy, token);
       setSaved(true);
       refetch();
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Failed to save");
+      setSaveError(err instanceof Error ? err.message : t("botDetail.failedSave"));
     } finally {
       setSaving(false);
     }
@@ -102,11 +106,12 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
   const handleLinkTelegram = async () => {
     setTelegramLinking(true);
     try {
-      const result = await linkTelegram();
+      const token = await getToken();
+      const result = await linkTelegram(token);
       setLinkCode(result.code);
       setLinkInstructions(result.instructions);
     } catch {
-      setSaveError("Falha ao gerar código Telegram");
+      setSaveError(t("botDetail.failedTelegram"));
     } finally {
       setTelegramLinking(false);
     }
@@ -136,26 +141,26 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 : "bg-brand-600 text-white hover:bg-brand-500"
             } disabled:opacity-50`}
           >
-            {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar Alteracoes"}
+            {saving ? t("botDetail.saving") : saved ? t("botDetail.saved") : t("botDetail.saveChanges")}
           </button>
         </div>
       </div>
 
       {/* Trust Score */}
       <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
-        <h3 className="text-sm font-semibold text-gray-300 mb-3">Trust Score</h3>
+        <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("bots.trustScore")}</h3>
         <TrustBar score={bot.trustScore} />
         <p className="text-xs text-gray-500 mt-2">
-          {bot.totalApproved} aprovadas &middot; {bot.totalBlocked} bloqueadas
+          {bot.totalApproved} {t("botDetail.approvedCount")} &middot; {bot.totalBlocked} {t("botDetail.blockedCount")}
         </p>
       </div>
 
       {/* Simplified: 3 main limit cards */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         {([
-          ["maxPerTransaction", "Máx por Compra", "$"],
-          ["maxPerDay", "Limite Diário", "$"],
-          ["autoApproveLimit", "Auto-aprovar até", "$"],
+          ["maxPerTransaction", t("botDetail.maxPerPurchase"), "$"],
+          ["maxPerDay", t("botDetail.dailyLimit"), "$"],
+          ["autoApproveLimit", t("botDetail.autoApproveUpTo"), "$"],
         ] as const).map(([key, label, prefix]) => (
           <div key={key} className="bg-surface-card border border-surface-border rounded-xl p-5">
             <label className="block text-xs text-gray-500 mb-2">{label}</label>
@@ -176,8 +181,8 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
       <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-gray-300">Notificações Telegram</h3>
-            <p className="text-xs text-gray-500 mt-1">Receba alertas quando compras precisarem de aprovação</p>
+            <h3 className="text-sm font-semibold text-gray-300">{t("botDetail.telegramNotif")}</h3>
+            <p className="text-xs text-gray-500 mt-1">{t("botDetail.telegramDesc")}</p>
           </div>
           {!linkCode ? (
             <button
@@ -185,7 +190,7 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
               disabled={telegramLinking}
               className="px-4 py-2 bg-[#0088cc] text-white text-xs font-medium rounded-lg hover:bg-[#0077b5] transition-colors disabled:opacity-50"
             >
-              {telegramLinking ? "..." : "Conectar"}
+              {telegramLinking ? "..." : t("common.connect")}
             </button>
           ) : (
             <div className="text-right">
@@ -199,22 +204,22 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
       {/* Validation warnings */}
       {policy.autoApproveLimit > policy.maxPerTransaction && (
         <div className="rounded-lg bg-pending/10 border border-pending/20 px-4 py-2 text-xs text-pending mb-6">
-          Auto-aprovar (${policy.autoApproveLimit}) não pode ser maior que máx por transação (${policy.maxPerTransaction}).
+          {t("botDetail.autoApproveWarning", { auto: policy.autoApproveLimit, max: policy.maxPerTransaction })}
         </div>
       )}
       {policy.requireApprovalUp > policy.maxPerTransaction && (
         <div className="rounded-lg bg-pending/10 border border-pending/20 px-4 py-2 text-xs text-pending mb-6">
-          Limite de aprovação (${policy.requireApprovalUp}) não pode ser maior que máx por transação (${policy.maxPerTransaction}).
+          {t("botDetail.approvalLimitWarning", { approval: policy.requireApprovalUp, max: policy.maxPerTransaction })}
         </div>
       )}
       {policy.autoApproveLimit > policy.requireApprovalUp && (
         <div className="rounded-lg bg-pending/10 border border-pending/20 px-4 py-2 text-xs text-pending mb-6">
-          Auto-aprovar (${policy.autoApproveLimit}) não pode ser maior que limite de aprovação (${policy.requireApprovalUp}).
+          {t("botDetail.autoVsApprovalWarning", { auto: policy.autoApproveLimit, approval: policy.requireApprovalUp })}
         </div>
       )}
       {policy.maxPerDay < policy.maxPerTransaction && (
         <div className="rounded-lg bg-pending/10 border border-pending/20 px-4 py-2 text-xs text-pending mb-6">
-          Limite diário (${policy.maxPerDay}) é menor que máx por transação (${policy.maxPerTransaction}).
+          {t("botDetail.dailyLimitWarning", { daily: policy.maxPerDay, max: policy.maxPerTransaction })}
         </div>
       )}
 
@@ -231,20 +236,20 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        Configurações avançadas
+        {t("botDetail.advancedSettings")}
       </button>
 
       {showAdvanced && (
         <>
           {/* Full Financial Limits */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
-            <h3 className="text-sm font-semibold text-gray-300 mb-4">Limites Financeiros</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-4">{t("botDetail.financialLimits")}</h3>
             <div className="grid grid-cols-2 gap-4">
               {([
-                ["maxPerTransaction", "Máx por Transação"],
-                ["maxPerDay", "Máx por Dia"],
-                ["maxPerWeek", "Máx por Semana"],
-                ["maxPerMonth", "Máx por Mês"],
+                ["maxPerTransaction", t("botDetail.maxPerTx")],
+                ["maxPerDay", t("botDetail.maxPerDay")],
+                ["maxPerWeek", t("botDetail.maxPerWeek")],
+                ["maxPerMonth", t("botDetail.maxPerMonth")],
               ] as const).map(([key, label]) => (
                 <div key={key}>
                   <label className="block text-xs text-gray-500 mb-1">{label}</label>
@@ -264,15 +269,15 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
 
           {/* Autonomy */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
-            <h3 className="text-sm font-semibold text-gray-300 mb-4">Autonomia por Faixa de Valor</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-4">{t("botDetail.autonomy")}</h3>
             <div className="space-y-4">
               <div className="flex items-center gap-3 p-3 bg-approved/5 border border-approved/10 rounded-lg">
                 <div className="w-3 h-3 rounded-full bg-approved" />
                 <div className="flex-1">
-                  <p className="text-sm text-white">Automático</p>
-                  <p className="text-xs text-gray-500">Aprovado sem intervenção humana</p>
+                  <p className="text-sm text-white">{t("botDetail.automatic")}</p>
+                  <p className="text-xs text-gray-500">{t("botDetail.automaticDesc")}</p>
                 </div>
-                <span className="text-sm text-gray-400">até</span>
+                <span className="text-sm text-gray-400">{t("common.until")}</span>
                 <div className="relative w-32">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                   <input
@@ -286,10 +291,10 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
               <div className="flex items-center gap-3 p-3 bg-pending/5 border border-pending/10 rounded-lg">
                 <div className="w-3 h-3 rounded-full bg-pending" />
                 <div className="flex-1">
-                  <p className="text-sm text-white">Requer Aprovação</p>
-                  <p className="text-xs text-gray-500">Aguarda aprovação humana</p>
+                  <p className="text-sm text-white">{t("botDetail.requireApproval")}</p>
+                  <p className="text-xs text-gray-500">{t("botDetail.requireApprovalDesc")}</p>
                 </div>
-                <span className="text-sm text-gray-400">até</span>
+                <span className="text-sm text-gray-400">{t("common.until")}</span>
                 <div className="relative w-32">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs">$</span>
                   <input
@@ -303,10 +308,10 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
               <div className="flex items-center gap-3 p-3 bg-blocked/5 border border-blocked/10 rounded-lg">
                 <div className="w-3 h-3 rounded-full bg-blocked" />
                 <div className="flex-1">
-                  <p className="text-sm text-white">Bloqueado</p>
-                  <p className="text-xs text-gray-500">Automaticamente rejeitado</p>
+                  <p className="text-sm text-white">{t("botDetail.blockedLabel")}</p>
+                  <p className="text-xs text-gray-500">{t("botDetail.blockedDesc")}</p>
                 </div>
-                <span className="text-sm text-gray-400">acima de ${policy.requireApprovalUp.toLocaleString()}</span>
+                <span className="text-sm text-gray-400">{t("common.above")} ${policy.requireApprovalUp.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -314,9 +319,9 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
           {/* Categories */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">Categorias Permitidas</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("botDetail.allowedCategories")}</h3>
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {policy.allowedCategories.length === 0 && <span className="text-xs text-gray-600">Todas permitidas</span>}
+                {policy.allowedCategories.length === 0 && <span className="text-xs text-gray-600">{t("botDetail.allAllowed")}</span>}
                 {policy.allowedCategories.map((cat) => (
                   <span key={cat} className="inline-flex items-center gap-1 px-2 py-1 bg-approved/10 text-approved text-xs rounded">
                     {cat}
@@ -325,14 +330,14 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newAllowedCat} onChange={(e) => setNewAllowedCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("allowedCategories", newAllowedCat, setNewAllowedCat)} placeholder="Adicionar" className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
+                <input value={newAllowedCat} onChange={(e) => setNewAllowedCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("allowedCategories", newAllowedCat, setNewAllowedCat)} placeholder={t("common.add")} className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
                 <button onClick={() => addToList("allowedCategories", newAllowedCat, setNewAllowedCat)} className="px-2 py-1.5 text-xs bg-surface-hover text-gray-400 rounded-lg hover:text-white">+</button>
               </div>
             </div>
             <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">Categorias Bloqueadas</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("botDetail.blockedCategories")}</h3>
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {policy.blockedCategories.length === 0 && <span className="text-xs text-gray-600">Nenhuma bloqueada</span>}
+                {policy.blockedCategories.length === 0 && <span className="text-xs text-gray-600">{t("botDetail.noneBlocked")}</span>}
                 {policy.blockedCategories.map((cat) => (
                   <span key={cat} className="inline-flex items-center gap-1 px-2 py-1 bg-blocked/10 text-blocked text-xs rounded">
                     {cat}
@@ -341,7 +346,7 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newBlockedCat} onChange={(e) => setNewBlockedCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("blockedCategories", newBlockedCat, setNewBlockedCat)} placeholder="Adicionar" className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
+                <input value={newBlockedCat} onChange={(e) => setNewBlockedCat(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("blockedCategories", newBlockedCat, setNewBlockedCat)} placeholder={t("common.add")} className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
                 <button onClick={() => addToList("blockedCategories", newBlockedCat, setNewBlockedCat)} className="px-2 py-1.5 text-xs bg-surface-hover text-gray-400 rounded-lg hover:text-white">+</button>
               </div>
             </div>
@@ -350,9 +355,9 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
           {/* Merchants */}
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">Merchants Whitelist</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("botDetail.merchantWhitelist")}</h3>
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {policy.merchantWhitelist.length === 0 && <span className="text-xs text-gray-600">Todos permitidos</span>}
+                {policy.merchantWhitelist.length === 0 && <span className="text-xs text-gray-600">{t("botDetail.allMerchants")}</span>}
                 {policy.merchantWhitelist.map((m) => (
                   <span key={m} className="inline-flex items-center gap-1 px-2 py-1 bg-approved/10 text-approved text-xs rounded">
                     {m}
@@ -361,14 +366,14 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newWhitelist} onChange={(e) => setNewWhitelist(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("merchantWhitelist", newWhitelist, setNewWhitelist)} placeholder="Adicionar" className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
+                <input value={newWhitelist} onChange={(e) => setNewWhitelist(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("merchantWhitelist", newWhitelist, setNewWhitelist)} placeholder={t("common.add")} className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
                 <button onClick={() => addToList("merchantWhitelist", newWhitelist, setNewWhitelist)} className="px-2 py-1.5 text-xs bg-surface-hover text-gray-400 rounded-lg hover:text-white">+</button>
               </div>
             </div>
             <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-              <h3 className="text-sm font-semibold text-gray-300 mb-3">Merchants Blacklist</h3>
+              <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("botDetail.merchantBlacklist")}</h3>
               <div className="flex flex-wrap gap-1.5 mb-3">
-                {policy.merchantBlacklist.length === 0 && <span className="text-xs text-gray-600">Nenhum bloqueado</span>}
+                {policy.merchantBlacklist.length === 0 && <span className="text-xs text-gray-600">{t("botDetail.noMerchantBlocked")}</span>}
                 {policy.merchantBlacklist.map((m) => (
                   <span key={m} className="inline-flex items-center gap-1 px-2 py-1 bg-blocked/10 text-blocked text-xs rounded">
                     {m}
@@ -377,7 +382,7 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={newBlacklist} onChange={(e) => setNewBlacklist(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("merchantBlacklist", newBlacklist, setNewBlacklist)} placeholder="Adicionar" className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
+                <input value={newBlacklist} onChange={(e) => setNewBlacklist(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addToList("merchantBlacklist", newBlacklist, setNewBlacklist)} placeholder={t("common.add")} className="flex-1 bg-surface border border-surface-border rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-brand-500" />
                 <button onClick={() => addToList("merchantBlacklist", newBlacklist, setNewBlacklist)} className="px-2 py-1.5 text-xs bg-surface-hover text-gray-400 rounded-lg hover:text-white">+</button>
               </div>
             </div>
@@ -385,9 +390,9 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
 
           {/* Time Window */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
-            <h3 className="text-sm font-semibold text-gray-300 mb-4">Janela de Operação</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-4">{t("botDetail.timeWindow")}</h3>
             <div className="mb-4">
-              <p className="text-xs text-gray-500 mb-2">Dias Permitidos</p>
+              <p className="text-xs text-gray-500 mb-2">{t("botDetail.allowedDays")}</p>
               <div className="flex gap-2">
                 {dayNames.map((dayName, i) => (
                   <button
@@ -406,16 +411,16 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
             </div>
             <div className="flex items-center gap-4">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Início</label>
+                <label className="block text-xs text-gray-500 mb-1">{t("botDetail.start")}</label>
                 <select value={policy.allowedHoursStart} onChange={(e) => updateField("allowedHoursStart", Number(e.target.value))} className="bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
                   ))}
                 </select>
               </div>
-              <span className="text-gray-500 mt-5">até</span>
+              <span className="text-gray-500 mt-5">{t("common.until")}</span>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Fim</label>
+                <label className="block text-xs text-gray-500 mb-1">{t("botDetail.end")}</label>
                 <select value={policy.allowedHoursEnd} onChange={(e) => updateField("allowedHoursEnd", Number(e.target.value))} className="bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
                   {Array.from({ length: 24 }, (_, i) => (
                     <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>

@@ -1,12 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
-const tabs = ["HTML", "WooCommerce", "Shopify", "API Direta"] as const;
-type Tab = (typeof tabs)[number];
+type MerchantTab = "HTML" | "WooCommerce" | "Shopify" | "API";
+type BotTab = "openclaw" | "api" | "coming";
 
 export default function InstallPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("HTML");
+  const { t } = useTranslation();
+  const merchantTabs: MerchantTab[] = ["HTML", "WooCommerce", "Shopify", "API"];
+  const [activeTab, setActiveTab] = useState<MerchantTab>("HTML");
+  const [activeBotTab, setActiveBotTab] = useState<BotTab>("openclaw");
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
   const merchantId = "YOUR_MERCHANT_ID";
 
@@ -27,7 +31,7 @@ export default function InstallPage() {
   -H "X-Bdit-Token: \${BDIT_TOKEN}" \\
   -H "X-Merchant-Id: ${merchantId}"`;
 
-  const jsVerify = `// Node.js — verificar BDIT token
+  const jsVerify = `// Node.js — verify BDIT token
 const res = await fetch('https://api.payjarvis.com/v1/verify', {
   headers: {
     'X-Bdit-Token': token,
@@ -37,12 +41,12 @@ const res = await fetch('https://api.payjarvis.com/v1/verify', {
 const result = await res.json();
 
 if (result.verified) {
-  console.log('Bot verificado:', result.bot);
-  console.log('Autorização:', result.authorization);
-  // Liberar checkout
+  console.log('Bot verified:', result.bot);
+  console.log('Authorization:', result.authorization);
+  // Allow checkout
 } else {
-  console.log('Token inválido:', result.error);
-  // Bloquear checkout
+  console.log('Invalid token:', result.error);
+  // Block checkout
 }`;
 
   const sdkInstall = `npm install @payjarvis/merchant-sdk`;
@@ -54,24 +58,264 @@ const verifier = new PayjarvisVerifier({
   jwksUrl: 'https://api.payjarvis.com/.well-known/jwks.json',
 });
 
-// No checkout:
+// At checkout:
 const result = await verifier.verify(token);
 if (result.valid) {
-  // Bot autorizado — liberar checkout
+  // Bot authorized — allow checkout
 }`;
+
+  const requestPaymentSnippet = `import { PayJarvis } from "@payjarvis/agent-sdk";
+
+const pj = new PayJarvis({ apiKey: "pj_bot_...", botId: "..." });
+
+const decision = await pj.requestPayment({
+  merchantName: "Amazon",
+  amount: 29.99,
+  currency: "USD",
+  category: "shopping",
+});
+
+if (decision.approved) {
+  // BDIT token em decision.bditToken
+  // Apresente ao merchant no checkout
+}`;
+
+  const browserAgentConnect = `curl -X POST https://www.payjarvis.com/api/browser-agent/connect \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "botApiKey": "pj_bot_...",
+    "botId": "YOUR_BOT_ID"
+  }'`;
+
+  const browserAgentStatus = `curl https://www.payjarvis.com/api/browser-agent/status`;
+
+  const openclawSnippet = `# 1. Start Chrome with CDP
+google-chrome-stable --headless=new --remote-debugging-port=18800 --no-sandbox
+
+# 2. Configure your OpenClaw / ClawdBot agent
+#    Set the following environment variables:
+export PAYJARVIS_API_KEY="pj_bot_..."
+export PAYJARVIS_BOT_ID="YOUR_BOT_ID"
+export CDP_URL="http://localhost:18800"
+
+# 3. Connect to PayJarvis Browser Agent
+curl -X POST https://www.payjarvis.com/api/browser-agent/connect \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "botApiKey": "'$PAYJARVIS_API_KEY'",
+    "botId": "'$PAYJARVIS_BOT_ID'"
+  }'`;
+
+  const apiGenericCurl = `# cURL
+curl -X POST https://api.payjarvis.com/v1/request-payment \\
+  -H "Authorization: Bearer pj_bot_..." \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "botId": "YOUR_BOT_ID",
+    "merchantName": "Amazon",
+    "amount": 29.99,
+    "currency": "USD",
+    "category": "shopping"
+  }'`;
+
+  const apiGenericPython = `# Python
+import requests
+
+resp = requests.post(
+    "https://api.payjarvis.com/v1/request-payment",
+    headers={"Authorization": "Bearer pj_bot_..."},
+    json={
+        "botId": "YOUR_BOT_ID",
+        "merchantName": "Amazon",
+        "amount": 29.99,
+        "currency": "USD",
+        "category": "shopping",
+    },
+)
+decision = resp.json()
+if decision["approved"]:
+    bdit_token = decision["bditToken"]`;
+
+  const apiGenericNode = `// Node.js
+const resp = await fetch("https://api.payjarvis.com/v1/request-payment", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer pj_bot_...",
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    botId: "YOUR_BOT_ID",
+    merchantName: "Amazon",
+    amount: 29.99,
+    currency: "USD",
+    category: "shopping",
+  }),
+});
+const decision = await resp.json();
+if (decision.approved) {
+  // Use decision.bditToken at checkout
+}`;
+
+  const CopyButton = ({ text, id }: { text: string; id: string }) => (
+    <button
+      onClick={() => handleCopy(text, id)}
+      className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
+        copiedBlock === id
+          ? "bg-approved/20 text-approved"
+          : "bg-surface-hover text-gray-400 hover:text-white"
+      }`}
+    >
+      {copiedBlock === id ? t("common.copied") : t("common.copy")}
+    </button>
+  );
+
+  const CodeBlock = ({ code, id }: { code: string; id: string }) => (
+    <div className="relative">
+      <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono overflow-x-auto">
+        {code}
+      </pre>
+      <CopyButton text={code} id={id} />
+    </div>
+  );
 
   return (
     <div className="max-w-4xl">
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">Instalar PayJarvis</h2>
+        <h2 className="text-2xl font-bold text-white">{t("install.title")}</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Integre a verificação de bots no seu e-commerce
+          {t("install.subtitle")}
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-surface-card border border-surface-border rounded-lg p-1">
-        {tabs.map((tab) => (
+      {/* ─── SECTION: Bot Integration Guide ─── */}
+      <div className="mb-10">
+        <h3 className="text-lg font-semibold text-white mb-4">Bot Integration Guide</h3>
+
+        {/* Bot type tabs */}
+        <div className="flex flex-wrap gap-1 mb-6 bg-surface-card border border-surface-border rounded-lg p-1">
+          {([
+            { key: "openclaw" as BotTab, label: "OpenClaw / ClawdBot" },
+            { key: "api" as BotTab, label: "API (curl / Python / Node)" },
+            { key: "coming" as BotTab, label: "Coming Soon" },
+          ]).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveBotTab(tab.key)}
+              className={`flex-1 px-4 py-2 text-sm rounded-md transition-colors ${
+                activeBotTab === tab.key
+                  ? "bg-brand-600 text-white font-medium"
+                  : "text-gray-400 hover:text-gray-200"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* OpenClaw / ClawdBot */}
+        {activeBotTab === "openclaw" && (
+          <div className="space-y-4">
+            <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+              <h4 className="text-sm font-semibold text-gray-300 mb-3">OpenClaw / ClawdBot Setup</h4>
+              <p className="text-xs text-gray-500 mb-4">
+                Connect your OpenClaw or ClawdBot agent to PayJarvis for autonomous purchases.
+              </p>
+              <CodeBlock code={openclawSnippet} id="openclaw" />
+            </div>
+          </div>
+        )}
+
+        {/* API genérica */}
+        {activeBotTab === "api" && (
+          <div className="space-y-4">
+            <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+              <h4 className="text-sm font-semibold text-gray-300 mb-3">cURL</h4>
+              <CodeBlock code={apiGenericCurl} id="api-curl" />
+            </div>
+            <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+              <h4 className="text-sm font-semibold text-gray-300 mb-3">Python</h4>
+              <CodeBlock code={apiGenericPython} id="api-python" />
+            </div>
+            <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+              <h4 className="text-sm font-semibold text-gray-300 mb-3">Node.js</h4>
+              <CodeBlock code={apiGenericNode} id="api-node" />
+            </div>
+          </div>
+        )}
+
+        {/* Coming Soon */}
+        {activeBotTab === "coming" && (
+          <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+            <h4 className="text-sm font-semibold text-gray-300 mb-3">Coming Soon</h4>
+            <div className="space-y-3 text-sm text-gray-400">
+              <div className="flex items-center gap-3 p-3 bg-surface rounded-lg border border-surface-border">
+                <span className="text-xs bg-pending/20 text-pending px-2 py-0.5 rounded font-medium">Soon</span>
+                <span>Perplexity</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 bg-surface rounded-lg border border-surface-border">
+                <span className="text-xs bg-pending/20 text-pending px-2 py-0.5 rounded font-medium">Soon</span>
+                <span>GPT Actions (OpenAI)</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ─── SECTION: Connect your bot to browser agent ─── */}
+      <div className="mb-10">
+        <h3 className="text-lg font-semibold text-white mb-4">Connect your bot to browser agent</h3>
+        <div className="space-y-4">
+          <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+            <h4 className="text-sm font-semibold text-gray-300 mb-2">1. Start Chrome with CDP</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              Your bot needs Chrome running with the Chrome DevTools Protocol enabled.
+            </p>
+            <CodeBlock
+              code="google-chrome-stable --headless=new --remote-debugging-port=18800 --no-sandbox"
+              id="cdp-chrome"
+            />
+          </div>
+
+          <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+            <h4 className="text-sm font-semibold text-gray-300 mb-2">2. Connect to PayJarvis Browser Agent</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              Register your bot with the browser agent endpoint.
+            </p>
+            <CodeBlock code={browserAgentConnect} id="browser-connect" />
+          </div>
+
+          <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+            <h4 className="text-sm font-semibold text-gray-300 mb-2">3. Check status</h4>
+            <p className="text-xs text-gray-500 mb-3">
+              Verify that your bot is connected and healthy.
+            </p>
+            <CodeBlock code={browserAgentStatus} id="browser-status" />
+          </div>
+        </div>
+      </div>
+
+      {/* ─── SECTION: request-payment example ─── */}
+      <div className="mb-10">
+        <h3 className="text-lg font-semibold text-white mb-4">SDK: requestPayment example</h3>
+        <div className="bg-surface-card border border-surface-border rounded-xl p-5">
+          <p className="text-xs text-gray-500 mb-3">
+            Full example using the <code className="text-brand-400">@payjarvis/agent-sdk</code> to request a payment and receive a BDIT token.
+          </p>
+          <CodeBlock code={requestPaymentSnippet} id="request-payment" />
+        </div>
+      </div>
+
+      {/* ─── SECTION: Merchant Integration ─── */}
+      <div className="mb-8">
+        <h3 className="text-lg font-semibold text-white mb-4">{t("install.title")}</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          {t("install.subtitle")}
+        </p>
+      </div>
+
+      {/* Merchant Tabs */}
+      <div className="flex flex-wrap gap-1 mb-6 bg-surface-card border border-surface-border rounded-lg p-1">
+        {merchantTabs.map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -81,7 +325,7 @@ if (result.valid) {
                 : "text-gray-400 hover:text-gray-200"
             }`}
           >
-            {tab}
+            {tab === "API" ? t("install.apiTab") : tab}
           </button>
         ))}
       </div>
@@ -91,30 +335,14 @@ if (result.valid) {
         <div className="space-y-6">
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
             <h3 className="text-sm font-semibold text-gray-300 mb-3">
-              Adicione a tag script ao seu checkout
+              {t("install.htmlTitle")}
             </h3>
             <p className="text-xs text-gray-500 mb-3">
-              Cole antes do &lt;/body&gt; na página de checkout. O script detecta
-              automaticamente tokens BDIT e verifica a identidade do bot.
+              {t("install.htmlDesc")}
             </p>
-            <div className="relative">
-              <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono overflow-x-auto">
-                {htmlCode}
-              </pre>
-              <button
-                onClick={() => handleCopy(htmlCode, "html")}
-                className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
-                  copiedBlock === "html"
-                    ? "bg-approved/20 text-approved"
-                    : "bg-surface-hover text-gray-400 hover:text-white"
-                }`}
-              >
-                {copiedBlock === "html" ? "Copiado!" : "Copiar"}
-              </button>
-            </div>
+            <CodeBlock code={htmlCode} id="html" />
             <p className="text-xs text-gray-600 mt-3">
-              Substitua <code className="text-brand-400">YOUR_MERCHANT_ID</code> pelo
-              seu ID de merchant.
+              {t("install.htmlReplace")}
             </p>
           </div>
         </div>
@@ -124,44 +352,26 @@ if (result.valid) {
       {activeTab === "WooCommerce" && (
         <div className="space-y-6">
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">Plugin WooCommerce</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("install.wooTitle")}</h3>
             <div className="space-y-4">
               <div className="flex items-center gap-4">
                 <button className="px-4 py-2.5 bg-brand-600 text-white text-sm font-medium rounded-lg hover:bg-brand-500 transition-colors">
-                  Baixar Plugin (.zip)
+                  {t("install.wooDownload")}
                 </button>
-                <span className="text-xs text-gray-500">v1.0.0 — WordPress 6.0+</span>
+                <span className="text-xs text-gray-500">{t("install.wooVersion")}</span>
               </div>
 
               <div className="border-t border-surface-border pt-4">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                  Instruções de instalação
+                  {t("install.wooInstructions")}
                 </h4>
                 <ol className="space-y-2 text-sm text-gray-300">
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">1.</span>
-                    Faça o download do plugin .zip acima
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">2.</span>
-                    No WordPress, vá em Plugins &gt; Adicionar Novo &gt; Enviar Plugin
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">3.</span>
-                    Faça upload do .zip e clique em Instalar Agora
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">4.</span>
-                    Ative o plugin
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">5.</span>
-                    Vá em WooCommerce &gt; Settings &gt; PayJarvis
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">6.</span>
-                    Configure seu Merchant ID e API Key
-                  </li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">1.</span>{t("install.woo1")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">2.</span>{t("install.woo2")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">3.</span>{t("install.woo3")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">4.</span>{t("install.woo4")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">5.</span>{t("install.woo5")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">6.</span>{t("install.woo6")}</li>
                 </ol>
               </div>
             </div>
@@ -173,34 +383,21 @@ if (result.valid) {
       {activeTab === "Shopify" && (
         <div className="space-y-6">
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">Shopify Extension</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("install.shopifyTitle")}</h3>
             <div className="space-y-4">
               <p className="text-sm text-gray-400">
-                O app PayJarvis para Shopify adiciona verificação de bot automaticamente
-                no checkout.
+                {t("install.shopifyDesc")}
               </p>
 
               <div className="border-t border-surface-border pt-4">
                 <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                  Como instalar
+                  {t("install.shopifyHow")}
                 </h4>
                 <ol className="space-y-2 text-sm text-gray-300">
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">1.</span>
-                    Acesse a Shopify App Store e busque &quot;PayJarvis&quot;
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">2.</span>
-                    Clique em Instalar e autorize o acesso
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">3.</span>
-                    Configure seu Merchant ID nas configurações do app
-                  </li>
-                  <li className="flex gap-2">
-                    <span className="text-brand-400 font-mono">4.</span>
-                    A verificação de bots será ativada automaticamente no checkout
-                  </li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">1.</span>{t("install.shopify1")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">2.</span>{t("install.shopify2")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">3.</span>{t("install.shopify3")}</li>
+                  <li className="flex gap-2"><span className="text-brand-400 font-mono">4.</span>{t("install.shopify4")}</li>
                 </ol>
               </div>
             </div>
@@ -208,82 +405,28 @@ if (result.valid) {
         </div>
       )}
 
-      {/* API Direta Tab */}
-      {activeTab === "API Direta" && (
+      {/* API Tab */}
+      {activeTab === "API" && (
         <div className="space-y-6">
-          {/* SDK Install */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">SDK (recomendado)</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("install.sdkTitle")}</h3>
             <div className="relative mb-4">
               <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono">
                 {sdkInstall}
               </pre>
-              <button
-                onClick={() => handleCopy(sdkInstall, "sdk-install")}
-                className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
-                  copiedBlock === "sdk-install"
-                    ? "bg-approved/20 text-approved"
-                    : "bg-surface-hover text-gray-400 hover:text-white"
-                }`}
-              >
-                {copiedBlock === "sdk-install" ? "Copiado!" : "Copiar"}
-              </button>
+              <CopyButton text={sdkInstall} id="sdk-install" />
             </div>
-            <div className="relative">
-              <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono overflow-x-auto">
-                {sdkCode}
-              </pre>
-              <button
-                onClick={() => handleCopy(sdkCode, "sdk-code")}
-                className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
-                  copiedBlock === "sdk-code"
-                    ? "bg-approved/20 text-approved"
-                    : "bg-surface-hover text-gray-400 hover:text-white"
-                }`}
-              >
-                {copiedBlock === "sdk-code" ? "Copiado!" : "Copiar"}
-              </button>
-            </div>
+            <CodeBlock code={sdkCode} id="sdk-code" />
           </div>
 
-          {/* cURL */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">cURL</h3>
-            <div className="relative">
-              <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono overflow-x-auto">
-                {curlVerify}
-              </pre>
-              <button
-                onClick={() => handleCopy(curlVerify, "curl")}
-                className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
-                  copiedBlock === "curl"
-                    ? "bg-approved/20 text-approved"
-                    : "bg-surface-hover text-gray-400 hover:text-white"
-                }`}
-              >
-                {copiedBlock === "curl" ? "Copiado!" : "Copiar"}
-              </button>
-            </div>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("install.curlTitle")}</h3>
+            <CodeBlock code={curlVerify} id="curl" />
           </div>
 
-          {/* JavaScript */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">JavaScript / Node.js</h3>
-            <div className="relative">
-              <pre className="bg-surface border border-surface-border rounded-lg p-4 text-xs text-green-400 font-mono overflow-x-auto">
-                {jsVerify}
-              </pre>
-              <button
-                onClick={() => handleCopy(jsVerify, "js")}
-                className={`absolute top-2 right-2 px-2 py-1 text-xs rounded transition-colors ${
-                  copiedBlock === "js"
-                    ? "bg-approved/20 text-approved"
-                    : "bg-surface-hover text-gray-400 hover:text-white"
-                }`}
-              >
-                {copiedBlock === "js" ? "Copiado!" : "Copiar"}
-              </button>
-            </div>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("install.jsTitle")}</h3>
+            <CodeBlock code={jsVerify} id="js" />
           </div>
         </div>
       )}

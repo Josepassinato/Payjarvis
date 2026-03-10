@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { getBots } from "@/lib/api";
 import type { Bot } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
@@ -17,7 +18,8 @@ interface OpenClawConfig {
 }
 
 export default function IntegrationsPage() {
-  const { data: bots, loading, error } = useApi<Bot[]>(() => getBots());
+  const { t } = useTranslation();
+  const { data: bots, loading, error } = useApi<Bot[]>((token) => getBots(token));
   const [selectedBot, setSelectedBot] = useState("");
   const [config, setConfig] = useState<OpenClawConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(false);
@@ -61,12 +63,12 @@ export default function IntegrationsPage() {
     try {
       const res = await fetch(testUrl + "/health");
       if (res.ok) {
-        setTestResult("Conexão OK!");
+        setTestResult(t("integrations.connectionOk"));
       } else {
-        setTestResult(`Erro: HTTP ${res.status}`);
+        setTestResult(`Error: HTTP ${res.status}`);
       }
     } catch {
-      setTestResult("Falha na conexão — verifique a URL e se o gateway está rodando");
+      setTestResult(t("integrations.connectionFailed"));
     }
   };
 
@@ -74,22 +76,22 @@ export default function IntegrationsPage() {
   if (error) return <ErrorBox message={error} />;
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">Conectar com OpenClaw</h2>
+        <h2 className="text-2xl font-bold text-white">{t("integrations.title")}</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Configure seu agente AI para usar o PayJarvis
+          {t("integrations.subtitle")}
         </p>
       </div>
 
       <div className="mb-6">
-        <label className="block text-xs text-gray-500 mb-1">Selecionar Bot</label>
+        <label className="block text-xs text-gray-500 mb-1">{t("integrations.selectBot")}</label>
         <select
           value={selectedBot}
           onChange={(e) => fetchConfig(e.target.value)}
-          className="w-full max-w-sm bg-surface-card border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
+          className="w-full w-full sm:max-w-sm bg-surface-card border border-surface-border rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-brand-500"
         >
-          <option value="">Escolha um bot...</option>
+          <option value="">{t("integrations.chooseBot")}</option>
           {(bots ?? []).map((b) => (
             <option key={b.id} value={b.id}>
               {b.name} ({b.platform})
@@ -103,10 +105,9 @@ export default function IntegrationsPage() {
 
       {config && (
         <div className="space-y-6">
-          {/* System Prompt */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-300">System Prompt</h3>
+              <h3 className="text-sm font-semibold text-gray-300">{t("integrations.systemPrompt")}</h3>
               <button
                 onClick={() => handleCopy(config.systemPrompt, setCopiedPrompt)}
                 className={`px-3 py-1.5 text-xs rounded-lg transition-colors ${
@@ -115,7 +116,7 @@ export default function IntegrationsPage() {
                     : "bg-surface-hover text-gray-400 hover:text-white"
                 }`}
               >
-                {copiedPrompt ? "Copiado!" : "Copiar"}
+                {copiedPrompt ? t("common.copied") : t("common.copy")}
               </button>
             </div>
             <textarea
@@ -125,14 +126,13 @@ export default function IntegrationsPage() {
               className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2 text-xs text-gray-300 font-mono resize-none focus:outline-none"
             />
             <p className="text-xs text-gray-600 mt-2">
-              Cole em Settings &gt; System Prompt no Clawdbot
+              {t("integrations.systemPromptHint")}
             </p>
           </div>
 
-          {/* Tools JSON */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-300">Tools JSON</h3>
+              <h3 className="text-sm font-semibold text-gray-300">{t("integrations.toolsJson")}</h3>
               <button
                 onClick={() =>
                   handleCopy(JSON.stringify(config.tools, null, 2), setCopiedTools)
@@ -143,7 +143,7 @@ export default function IntegrationsPage() {
                     : "bg-surface-hover text-gray-400 hover:text-white"
                 }`}
               >
-                {copiedTools ? "Copiado!" : "Copiar JSON"}
+                {copiedTools ? t("common.copied") : t("integrations.copyJson")}
               </button>
             </div>
             <pre className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2 text-xs text-green-400 font-mono overflow-x-auto max-h-64 overflow-y-auto">
@@ -151,12 +151,11 @@ export default function IntegrationsPage() {
             </pre>
           </div>
 
-          {/* Test Connection */}
           <div className="bg-surface-card border border-surface-border rounded-xl p-5">
-            <h3 className="text-sm font-semibold text-gray-300 mb-3">Testar Conexão</h3>
+            <h3 className="text-sm font-semibold text-gray-300 mb-3">{t("integrations.testConnection")}</h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">URL do Gateway</label>
+                <label className="block text-xs text-gray-500 mb-1">{t("integrations.gatewayUrl")}</label>
                 <input
                   type="text"
                   value={testUrl}
@@ -166,7 +165,7 @@ export default function IntegrationsPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Token do Gateway (opcional)</label>
+                <label className="block text-xs text-gray-500 mb-1">{t("integrations.gatewayToken")}</label>
                 <input
                   type="text"
                   value={testToken}
@@ -179,12 +178,12 @@ export default function IntegrationsPage() {
                 onClick={handleTest}
                 className="px-4 py-2 bg-brand-600 text-white text-sm rounded-lg hover:bg-brand-500 transition-colors"
               >
-                Testar
+                {t("integrations.test")}
               </button>
               {testResult && (
                 <p
                   className={`text-sm ${
-                    testResult.startsWith("Conexão OK") ? "text-approved" : "text-blocked"
+                    testResult === t("integrations.connectionOk") ? "text-approved" : "text-blocked"
                   }`}
                 >
                   {testResult}

@@ -1,20 +1,22 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
+import { useAuth } from "@clerk/nextjs";
 import { getApprovals, respondToApproval } from "@/lib/api";
 import type { Approval } from "@/lib/api";
 import { useApi } from "@/lib/use-api";
 import { LoadingSpinner, ErrorBox } from "@/components/loading";
 import { currency } from "@/lib/format";
 
-function Countdown({ expiresAt }: { expiresAt: string }) {
+function Countdown({ expiresAt, expiredLabel }: { expiresAt: string; expiredLabel: string }) {
   const [remaining, setRemaining] = useState("");
 
   useEffect(() => {
     const tick = () => {
       const diff = new Date(expiresAt).getTime() - Date.now();
       if (diff <= 0) {
-        setRemaining("Expirado");
+        setRemaining(expiredLabel);
         return;
       }
       const mins = Math.floor(diff / 60000);
@@ -24,7 +26,7 @@ function Countdown({ expiresAt }: { expiresAt: string }) {
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [expiresAt]);
+  }, [expiresAt, expiredLabel]);
 
   const diff = new Date(expiresAt).getTime() - Date.now();
   const isExpired = diff <= 0;
@@ -51,12 +53,13 @@ function Toast({ message, onDismiss }: { message: string; onDismiss: () => void 
 }
 
 export default function ApprovalsPage() {
-  const { data: approvals, loading, error, refetch } = useApi<Approval[]>(() => getApprovals());
+  const { t } = useTranslation();
+  const { getToken } = useAuth();
+  const { data: approvals, loading, error, refetch } = useApi<Approval[]>((token) => getApprovals(token));
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionTaken, setActionTaken] = useState<Record<string, "approved" | "rejected">>({});
   const [toast, setToast] = useState<string | null>(null);
 
-  // SSE real-time updates + expiration handling + fallback polling
   useEffect(() => {
     const pollId = setInterval(() => refetch(), 30000);
 
@@ -70,7 +73,7 @@ export default function ApprovalsPage() {
         refetch();
         try {
           const data = JSON.parse(event.data);
-          setToast("Aprovação expirada — compra bloqueada automaticamente");
+          setToast(t("approvals.expiredToast"));
         } catch {}
       });
       es.onerror = () => {
@@ -85,9 +88,8 @@ export default function ApprovalsPage() {
       clearInterval(pollId);
       es?.close();
     };
-  }, [refetch]);
+  }, [refetch, t]);
 
-  // Client-side expiration check — auto-remove expired approvals from display
   useEffect(() => {
     if (!approvals || approvals.length === 0) return;
 
@@ -95,7 +97,7 @@ export default function ApprovalsPage() {
       const now = Date.now();
       for (const a of approvals) {
         if (new Date(a.expiresAt).getTime() < now && !actionTaken[a.id]) {
-          setToast("Aprovação expirada — compra bloqueada automaticamente");
+          setToast(t("approvals.expiredToast"));
           refetch();
           return;
         }
@@ -104,12 +106,13 @@ export default function ApprovalsPage() {
 
     const id = setInterval(checkExpired, 5000);
     return () => clearInterval(id);
-  }, [approvals, actionTaken, refetch]);
+  }, [approvals, actionTaken, refetch, t]);
 
   const handleAction = async (id: string, action: "approve" | "reject") => {
     setActionLoading(id);
     try {
-      await respondToApproval(id, action);
+      const token = await getToken();
+      await respondToApproval(id, action, undefined, token);
       setActionTaken((prev) => ({ ...prev, [id]: action === "approve" ? "approved" : "rejected" }));
       setTimeout(() => refetch(), 500);
     } catch (err) {
@@ -129,16 +132,16 @@ export default function ApprovalsPage() {
       {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
 
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">Aprovações Pendentes</h2>
+        <h2 className="text-2xl font-bold text-white">{t("approvals.title")}</h2>
         <p className="text-sm text-gray-500 mt-1">
-          {list.length} compra{list.length !== 1 ? "s" : ""} aguardando sua decisão
+          {t("approvals.count", { count: list.length })}
         </p>
       </div>
 
       {list.length === 0 ? (
         <div className="bg-surface-card border border-surface-border rounded-xl p-12 text-center">
-          <p className="text-gray-400">Nenhuma aprovação pendente</p>
-          <p className="text-xs text-gray-600 mt-1">Seus bots estão operando dentro dos limites</p>
+          <p className="text-gray-400">{t("approvals.none")}</p>
+          <p className="text-xs text-gray-600 mt-1">{t("approvals.noneHint")}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -158,10 +161,10 @@ export default function ApprovalsPage() {
                     : "border-pending/20"
                 }`}
               >
-                <div className="flex items-start justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <span className="text-xs text-gray-500">Bot: {approval.botId.slice(0, 8)}...</span>
+                      <span className="text-xs text-gray-500">{t("approvals.bot")}: {approval.botId.slice(0, 8)}...</span>
                       <span className="w-1 h-1 rounded-full bg-gray-700" />
                       <span className="text-xs text-gray-500">{approval.category}</span>
                     </div>
@@ -169,26 +172,26 @@ export default function ApprovalsPage() {
                     <p className="text-2xl font-bold text-white mt-1">{currency(approval.amount)}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-gray-500 mb-1">Expira em</p>
-                    <Countdown expiresAt={approval.expiresAt} />
+                    <p className="text-xs text-gray-500 mb-1">{t("approvals.expiresIn")}</p>
+                    <Countdown expiresAt={approval.expiresAt} expiredLabel={t("approvals.expired")} />
                   </div>
                 </div>
 
                 {!taken && !expired && (
-                  <div className="flex gap-3 mt-5 pt-4 border-t border-surface-border">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mt-5 pt-4 border-t border-surface-border">
                     <button
                       onClick={() => handleAction(approval.id, "approve")}
                       disabled={actionLoading === approval.id}
                       className="flex-1 py-2.5 bg-approved/10 border border-approved/20 text-approved font-medium text-sm rounded-lg hover:bg-approved/20 transition-colors disabled:opacity-50"
                     >
-                      {actionLoading === approval.id ? "..." : "APROVAR"}
+                      {actionLoading === approval.id ? "..." : t("approvals.approve")}
                     </button>
                     <button
                       onClick={() => handleAction(approval.id, "reject")}
                       disabled={actionLoading === approval.id}
                       className="flex-1 py-2.5 bg-blocked/10 border border-blocked/20 text-blocked font-medium text-sm rounded-lg hover:bg-blocked/20 transition-colors disabled:opacity-50"
                     >
-                      {actionLoading === approval.id ? "..." : "BLOQUEAR"}
+                      {actionLoading === approval.id ? "..." : t("approvals.block")}
                     </button>
                   </div>
                 )}
@@ -196,14 +199,14 @@ export default function ApprovalsPage() {
                 {taken && (
                   <div className="mt-4 pt-3 border-t border-surface-border">
                     <p className={`text-sm font-medium ${taken === "approved" ? "text-approved" : "text-blocked"}`}>
-                      {taken === "approved" ? "Aprovado" : "Bloqueado"}
+                      {taken === "approved" ? t("decisions.approved") : t("decisions.blocked")}
                     </p>
                   </div>
                 )}
 
                 {expired && !taken && (
                   <div className="mt-4 pt-3 border-t border-surface-border">
-                    <p className="text-sm font-medium text-gray-500">Expirado — compra bloqueada</p>
+                    <p className="text-sm font-medium text-gray-500">{t("approvals.expiredPurchase")}</p>
                   </div>
                 )}
               </div>

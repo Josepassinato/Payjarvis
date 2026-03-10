@@ -70,8 +70,9 @@ module.exports = {
     },
     {
       name: "payjarvis-web",
-      script: path.resolve(__dirname, "apps/web/.next/standalone/apps/web/server.js"),
-      cwd: path.resolve(__dirname, "apps/web/.next/standalone"),
+      script: path.resolve(__dirname, "scripts/start-web.sh"),
+      interpreter: "/bin/bash",
+      cwd: path.resolve(__dirname),
       env: {
         ...prodEnv,
         NODE_ENV: "production",

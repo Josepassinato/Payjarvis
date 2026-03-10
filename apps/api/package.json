@@ -13,6 +13,7 @@
   "dependencies": {
     "@clerk/fastify": "^3.0.1",
     "@fastify/cors": "^10.0.0",
+    "@google/generative-ai": "^0.24.1",
     "@payjarvis/bdit": "*",
     "@payjarvis/database": "*",
     "@payjarvis/types": "*",

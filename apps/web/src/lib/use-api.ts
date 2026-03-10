@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 interface UseApiResult<T> {
   data: T | null;
@@ -9,7 +10,8 @@ interface UseApiResult<T> {
   refetch: () => void;
 }
 
-export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []): UseApiResult<T> {
+export function useApi<T>(fetcher: (token: string) => Promise<T>, deps: unknown[] = []): UseApiResult<T> {
+  const { getToken, isLoaded } = useAuth();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,13 +20,23 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []): UseA
   const refetch = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    if (!isLoaded) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
 
-    fetcher()
+    getToken()
+      .then((token) => {
+        if (!token) {
+          // Session expired — redirect to sign-in
+          window.location.href = "/sign-in";
+          return;
+        }
+        return fetcher(token);
+      })
       .then((result) => {
-        if (!cancelled) {
+        if (!cancelled && result !== undefined) {
           setData(result);
           setLoading(false);
         }
@@ -38,7 +50,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []): UseA
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tick, ...deps]);
+  }, [isLoaded, tick, ...deps]);
 
   return { data, loading, error, refetch };
 }

@@ -6,25 +6,19 @@ export class ApiError extends Error {
   }
 }
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
+function buildHeaders(token?: string | null): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  try {
-    const clerk = (window as any).Clerk;
-    if (clerk?.session) {
-      const token = await clerk.session.getToken();
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-    }
-  } catch {}
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const authHeaders = await getAuthHeaders();
+async function request<T>(path: string, options?: RequestInit & { token?: string | null }): Promise<T> {
+  const { token, ...fetchOptions } = options ?? {};
   const res = await fetch(`${API_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
-      ...authHeaders,
-      ...options?.headers,
+      ...buildHeaders(token),
+      ...fetchOptions?.headers,
     },
   });
 
@@ -37,13 +31,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return json.data as T;
 }
 
-async function requestPaginated<T>(path: string, options?: RequestInit): Promise<PaginatedResult<T>> {
-  const authHeaders = await getAuthHeaders();
+async function requestPaginated<T>(path: string, options?: RequestInit & { token?: string | null }): Promise<PaginatedResult<T>> {
+  const { token, ...fetchOptions } = options ?? {};
   const res = await fetch(`${API_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers: {
-      ...authHeaders,
-      ...options?.headers,
+      ...buildHeaders(token),
+      ...fetchOptions?.headers,
     },
   });
 
@@ -113,30 +107,33 @@ export interface CreateBotResult extends Bot {
   apiKey: string;
 }
 
-export function getBots(): Promise<Bot[]> {
-  return request<Bot[]>("/bots");
+export function getBots(token?: string | null): Promise<Bot[]> {
+  return request<Bot[]>("/bots", { token });
 }
 
-export function getBot(id: string): Promise<Bot> {
-  return request<Bot>(`/bots/${id}`);
+export function getBot(id: string, token?: string | null): Promise<Bot> {
+  return request<Bot>(`/bots/${id}`, { token });
 }
 
-export function createBot(name: string, platform: string): Promise<CreateBotResult> {
+export function createBot(name: string, platform: string, token?: string | null): Promise<CreateBotResult> {
   return request<CreateBotResult>("/bots", {
+    token,
     method: "POST",
     body: JSON.stringify({ name, platform }),
   });
 }
 
-export function updateBot(id: string, data: Partial<Pick<Bot, "name" | "platform">>): Promise<Bot> {
+export function updateBot(id: string, data: Partial<Pick<Bot, "name" | "platform">>, token?: string | null): Promise<Bot> {
   return request<Bot>(`/bots/${id}`, {
+    token,
     method: "PATCH",
     body: JSON.stringify(data),
   });
 }
 
-export function updateBotStatus(id: string, status: string): Promise<Bot> {
+export function updateBotStatus(id: string, status: string, token?: string | null): Promise<Bot> {
   return request<Bot>(`/bots/${id}/status`, {
+    token,
     method: "PATCH",
     body: JSON.stringify({ status }),
   });
@@ -144,19 +141,21 @@ export function updateBotStatus(id: string, status: string): Promise<Bot> {
 
 // ── Policies ──
 
-export function getPolicy(botId: string): Promise<Policy> {
-  return request<Policy>(`/bots/${botId}/policy`);
+export function getPolicy(botId: string, token?: string | null): Promise<Policy> {
+  return request<Policy>(`/bots/${botId}/policy`, { token });
 }
 
-export function upsertPolicy(botId: string, data: Partial<Omit<Policy, "id" | "botId" | "createdAt" | "updatedAt">>): Promise<Policy> {
+export function upsertPolicy(botId: string, data: Partial<Omit<Policy, "id" | "botId" | "createdAt" | "updatedAt">>, token?: string | null): Promise<Policy> {
   return request<Policy>(`/bots/${botId}/policy`, {
+    token,
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export function updatePolicy(botId: string, data: Partial<Omit<Policy, "id" | "botId" | "createdAt" | "updatedAt">>): Promise<Policy> {
+export function updatePolicy(botId: string, data: Partial<Omit<Policy, "id" | "botId" | "createdAt" | "updatedAt">>, token?: string | null): Promise<Policy> {
   return request<Policy>(`/bots/${botId}/policy`, {
+    token,
     method: "PATCH",
     body: JSON.stringify(data),
   });
@@ -191,7 +190,7 @@ export interface TransactionFilters {
   limit?: number;
 }
 
-export function getTransactions(filters?: TransactionFilters): Promise<PaginatedResult<Transaction>> {
+export function getTransactions(filters?: TransactionFilters, token?: string | null): Promise<PaginatedResult<Transaction>> {
   const params = new URLSearchParams();
   if (filters?.botId) params.set("botId", filters.botId);
   if (filters?.dateFrom) params.set("dateFrom", filters.dateFrom);
@@ -201,7 +200,7 @@ export function getTransactions(filters?: TransactionFilters): Promise<Paginated
   if (filters?.page) params.set("page", String(filters.page));
   if (filters?.limit) params.set("limit", String(filters.limit));
   const qs = params.toString();
-  return requestPaginated<Transaction>(`/transactions${qs ? `?${qs}` : ""}`);
+  return requestPaginated<Transaction>(`/transactions${qs ? `?${qs}` : ""}`, { token });
 }
 
 export function getTransactionsPdfUrl(filters?: TransactionFilters): string {
@@ -229,12 +228,13 @@ export interface Approval {
   createdAt: string;
 }
 
-export function getApprovals(): Promise<Approval[]> {
-  return request<Approval[]>("/approvals");
+export function getApprovals(token?: string | null): Promise<Approval[]> {
+  return request<Approval[]>("/approvals", { token });
 }
 
-export function respondToApproval(id: string, action: "approve" | "reject", reason?: string): Promise<{ status: string; bditToken?: string; expiresAt?: string }> {
+export function respondToApproval(id: string, action: "approve" | "reject", reason?: string, token?: string | null): Promise<{ status: string; bditToken?: string; expiresAt?: string }> {
   return request(`/approvals/${id}/respond`, {
+    token,
     method: "POST",
     body: JSON.stringify({ action, reason }),
   });
@@ -242,9 +242,8 @@ export function respondToApproval(id: string, action: "approve" | "reject", reas
 
 // ── Notifications ──
 
-
-export function linkTelegram(): Promise<{ code: string; instructions: string }> {
-  return request('/notifications/telegram/link', { method: 'POST' });
+export function linkTelegram(token?: string | null): Promise<{ code: string; instructions: string }> {
+  return request('/notifications/telegram/link', { token, method: 'POST', body: JSON.stringify({}) });
 }
 
 // ── Payments ──
@@ -265,8 +264,9 @@ export function requestPayment(botId: string, data: {
   amount: number;
   currency?: string;
   category: string;
-}): Promise<PaymentResult> {
+}, token?: string | null): Promise<PaymentResult> {
   return request<PaymentResult>(`/bots/${botId}/request-payment`, {
+    token,
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -299,18 +299,18 @@ export interface BotBreakdown {
   count: number;
 }
 
-export function getSpendingTrends(): Promise<SpendingTrend[]> {
-  return request<SpendingTrend[]>("/analytics/spending-trends");
+export function getSpendingTrends(token?: string | null): Promise<SpendingTrend[]> {
+  return request<SpendingTrend[]>("/analytics/spending-trends", { token });
 }
 
-export function getByCategory(): Promise<CategoryBreakdown[]> {
-  return request<CategoryBreakdown[]>("/analytics/by-category");
+export function getByCategory(token?: string | null): Promise<CategoryBreakdown[]> {
+  return request<CategoryBreakdown[]>("/analytics/by-category", { token });
 }
 
-export function getDecisions(): Promise<DecisionBreakdown[]> {
-  return request<DecisionBreakdown[]>("/analytics/decisions");
+export function getDecisions(token?: string | null): Promise<DecisionBreakdown[]> {
+  return request<DecisionBreakdown[]>("/analytics/decisions", { token });
 }
 
-export function getByBot(): Promise<BotBreakdown[]> {
-  return request<BotBreakdown[]>("/analytics/by-bot");
+export function getByBot(token?: string | null): Promise<BotBreakdown[]> {
+  return request<BotBreakdown[]>("/analytics/by-bot", { token });
 }

@@ -85,6 +85,20 @@ enum MerchantStatus {
   PENDING_REVIEW
 }
 
+enum PaymentProvider {
+  STRIPE
+  PAYPAL
+  APPLE_PAY
+  GOOGLE_PAY
+  BNPL
+}
+
+enum PaymentMethodStatus {
+  CONNECTED
+  PENDING
+  DISABLED
+}
+
 // ─── Models ───
 
 model User {
@@ -96,6 +110,7 @@ model User {
   status              UserStatus @default(PENDING_KYC)
   telegramChatId      String?
   notificationChannel String     @default("none") // "none" | "telegram" | "email"
+  stripeAccountId     String?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 
@@ -104,6 +119,7 @@ model User {
   approvalRequests  ApprovalRequest[]
   handoffRequests   HandoffRequest[]
   telegramLinkCode  TelegramLinkCode?
+  paymentMethods    PaymentMethod[]
 
   @@map("users")
 }
@@ -118,6 +134,25 @@ model TelegramLinkCode {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("telegram_link_codes")
+}
+
+model PaymentMethod {
+  id              String              @id @default(cuid())
+  userId          String
+  provider        PaymentProvider
+  status          PaymentMethodStatus @default(PENDING)
+  accountId       String?             // e.g. Stripe account ID
+  credentials     Json?               // encrypted provider-specific data
+  isDefault       Boolean             @default(false)
+  metadata        Json?               // display info, last4, brand, etc
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("payment_methods")
 }
 
 model Bot {

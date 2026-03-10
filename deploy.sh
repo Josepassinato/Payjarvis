@@ -76,11 +76,17 @@ ok "Database sincronizado"
 log "═══ ETAPA 6: Build do monorepo ═══"
 
 npm run build
-ok "Build 10/10 concluído"
+ok "Build concluido"
 
-# Copiar estáticos do Next.js
-cp -r apps/web/.next/static apps/web/.next/standalone/apps/web/.next/static 2>/dev/null || true
-ok "Next.js standalone preparado"
+# Copiar estaticos do Next.js (standalone nao inclui .next/static)
+STANDALONE_WEB="apps/web/.next/standalone/apps/web"
+rm -rf "$STANDALONE_WEB/.next/static"
+cp -r apps/web/.next/static "$STANDALONE_WEB/.next/static"
+if [ -d apps/web/public ]; then
+    rm -rf "$STANDALONE_WEB/public"
+    cp -r apps/web/public "$STANDALONE_WEB/public"
+fi
+ok "Next.js standalone + static assets preparado"
 
 # ─── ETAPA 7: Deploy PM2 ───
 log "═══ ETAPA 7: Deploy com PM2 ═══"

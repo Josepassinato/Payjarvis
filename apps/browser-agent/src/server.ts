@@ -230,6 +230,177 @@ app.post("/openclaw/tool-invoke", async (request, reply) => {
   return reply.status(400).send({ error: "Invalid action" });
 });
 
+/** Navegar para uma URL no Chrome via CDP */
+app.post("/navigate", async (request, reply) => {
+  const body = request.body as { url: string; botId?: string };
+
+  if (!body.url) {
+    return reply.status(400).send({
+      success: false,
+      error: "url is required",
+    });
+  }
+
+  if (!cdpMonitor?.isConnected) {
+    return reply.status(400).send({
+      success: false,
+      error: "CDP not connected. Call POST /connect first.",
+    });
+  }
+
+  lastActivity = new Date();
+
+  try {
+    // Get first page target
+    const targetsRes = await fetch(
+      `http://localhost:${cdpMonitor.cdpPort}/json/list`
+    );
+    const targets = (await targetsRes.json()) as Array<{
+      id: string;
+      type: string;
+      url: string;
+      webSocketDebuggerUrl?: string;
+    }>;
+    const pageTarget = targets.find((t) => t.type === "page");
+
+    if (!pageTarget?.webSocketDebuggerUrl) {
+      return reply.status(500).send({
+        success: false,
+        error: "No page target available in Chrome",
+      });
+    }
+
+    // Connect to the page target directly for navigation
+    const { default: WS } = await import("ws");
+    const pageWs = new WS(pageTarget.webSocketDebuggerUrl);
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Timeout connecting to page target")),
+        5000
+      );
+      pageWs.on("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      pageWs.on("error", (err: Error) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    let msgId = 0;
+    const sendCmd = (method: string, params: Record<string, unknown> = {}) =>
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        const id = ++msgId;
+        const timeout = setTimeout(
+          () => reject(new Error(`CDP timeout: ${method}`)),
+          15000
+        );
+        const handler = (data: Buffer) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.id === id) {
+            clearTimeout(timeout);
+            pageWs.off("message", handler);
+            if (msg.error) {
+              reject(new Error(msg.error.message));
+            } else {
+              resolve(msg.result ?? {});
+            }
+          }
+        };
+        pageWs.on("message", handler);
+        pageWs.send(JSON.stringify({ id, method, params }));
+      });
+
+    // Enable Page events
+    await sendCmd("Page.enable");
+
+    // Navigate
+    const navResult = await sendCmd("Page.navigate", { url: body.url });
+    if ((navResult as any).errorText) {
+      pageWs.close();
+      return reply.status(400).send({
+        success: false,
+        error: `Navigation failed: ${(navResult as any).errorText}`,
+      });
+    }
+
+    // Wait for load event (timeout 10s)
+    await new Promise<void>((resolve) => {
+      let resolved = false;
+      const timeout = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      }, 10000);
+      const handler = (data: Buffer) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.method === "Page.loadEventFired") {
+          clearTimeout(timeout);
+          pageWs.off("message", handler);
+          if (!resolved) {
+            resolved = true;
+            resolve();
+          }
+        }
+      };
+      pageWs.on("message", handler);
+    });
+
+    // Small delay for JS rendering
+    await new Promise((r) => setTimeout(r, 500));
+
+    // Extract page info via Runtime.evaluate
+    const titleResult = await sendCmd("Runtime.evaluate", {
+      expression: "document.title",
+      returnByValue: true,
+    });
+    const title =
+      (titleResult as any)?.result?.value ?? "Unknown";
+
+    const urlResult = await sendCmd("Runtime.evaluate", {
+      expression: "window.location.href",
+      returnByValue: true,
+    });
+    const finalUrl =
+      (urlResult as any)?.result?.value ?? body.url;
+
+    const contentResult = await sendCmd("Runtime.evaluate", {
+      expression:
+        "(document.body?.innerText || '').substring(0, 2000)",
+      returnByValue: true,
+    });
+    const content =
+      (contentResult as any)?.result?.value ?? "";
+
+    // Close page-level WS
+    pageWs.close();
+
+    app.log.info(
+      { url: body.url, finalUrl, title },
+      "Navigation completed"
+    );
+
+    return {
+      success: true,
+      title,
+      url: finalUrl,
+      content,
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Navigation failed";
+    app.log.error({ err, url: body.url }, "Navigation error");
+    return reply.status(500).send({
+      success: false,
+      error: message,
+    });
+  }
+});
+
+
 // ─── Start ───────────────────────────────────────────
 
 const port = parseInt(
