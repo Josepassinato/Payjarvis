@@ -35,7 +35,7 @@ export function Sidebar() {
       {/* Mobile hamburger */}
       <button
         onClick={() => setOpen(true)}
-        className="fixed top-4 left-4 z-50 md:hidden bg-surface-card border border-surface-border rounded-lg p-2"
+        className="fixed top-4 left-4 z-50 md:hidden bg-surface-card border border-surface-border rounded-lg p-2 backdrop-blur-sm"
         aria-label={t("nav.openMenu")}
       >
         <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -45,15 +45,15 @@ export function Sidebar() {
 
       {/* Mobile overlay */}
       {open && (
-        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={() => setOpen(false)} />
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden" onClick={() => setOpen(false)} />
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed left-0 top-0 h-full w-56 bg-surface-card border-r border-surface-border flex flex-col z-50 transition-transform duration-200 md:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
+      <aside className={`fixed left-0 top-0 h-full w-56 bg-surface-card/95 backdrop-blur-md border-r border-surface-border flex flex-col z-50 transition-transform duration-200 md:translate-x-0 ${open ? "translate-x-0 animate-slide-in-left" : "-translate-x-full md:translate-x-0"}`}>
         {/* Mobile close button */}
         <button
           onClick={() => setOpen(false)}
-          className="absolute top-4 right-3 md:hidden text-gray-500 hover:text-white"
+          className="absolute top-4 right-3 md:hidden text-gray-500 hover:text-white transition-colors"
           aria-label={t("nav.closeMenu")}
         >
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -62,25 +62,38 @@ export function Sidebar() {
         </button>
 
         <div className="px-5 py-6">
-          <h1 className="text-xl font-bold text-white">
-            Pay<span className="text-brand-500">Jarvis</span>
-          </h1>
-          <p className="text-[11px] text-gray-500 mt-0.5">{t("nav.subtitle")}</p>
+          <div className="flex items-center gap-2.5">
+            {/* Logo icon */}
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-accent flex items-center justify-center">
+              <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-lg font-display font-bold text-white">
+                Pay<span className="text-gradient-brand">Jarvis</span>
+              </h1>
+            </div>
+          </div>
+          <p className="text-[10px] text-gray-500 mt-1.5 ml-[42px] tracking-wide uppercase">{t("nav.subtitle")}</p>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 px-3 space-y-0.5">
           {links.map((link) => {
             const active = pathname.startsWith(link.href);
             return (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
                   active
-                    ? "bg-brand-600/20 text-brand-400"
+                    ? "bg-brand-600/15 text-brand-400"
                     : "text-gray-400 hover:text-gray-200 hover:bg-surface-hover"
                 }`}
               >
+                {active && (
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-brand-500 rounded-r-full" />
+                )}
                 <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d={link.icon} />
                 </svg>
@@ -91,7 +104,7 @@ export function Sidebar() {
         </nav>
 
         <div className="px-5 py-4 border-t border-surface-border flex items-center justify-between">
-          <p className="text-xs text-gray-600">PayJarvis v0.1.0</p>
+          <p className="text-[10px] text-gray-600 font-mono">v0.1.0</p>
           <LanguageSelector />
         </div>
       </aside>

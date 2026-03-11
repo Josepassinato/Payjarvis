@@ -16,7 +16,7 @@ export default function RootLayout({
   return (
     <ClerkProvider>
       <html lang="en" className="dark">
-        <body className="bg-surface text-gray-100 antialiased">
+        <body className="bg-surface text-gray-100 antialiased font-body">
           <I18nProvider>
             {children}
           </I18nProvider>

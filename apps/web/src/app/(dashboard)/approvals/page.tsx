@@ -46,8 +46,13 @@ function Toast({ message, onDismiss }: { message: string; onDismiss: () => void 
   }, [onDismiss]);
 
   return (
-    <div className="fixed bottom-6 right-6 bg-surface-card border border-blocked/30 rounded-xl px-5 py-3 shadow-lg z-50 animate-pulse">
-      <p className="text-sm text-blocked">{message}</p>
+    <div className="fixed bottom-6 right-6 bg-surface-card border-l-2 border-l-blocked border border-blocked/20 rounded-xl px-5 py-3 shadow-2xl shadow-black/30 z-50 animate-slide-in-right">
+      <div className="flex items-center gap-2">
+        <svg className="w-4 h-4 text-blocked shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p className="text-sm text-blocked">{message}</p>
+      </div>
     </div>
   );
 }

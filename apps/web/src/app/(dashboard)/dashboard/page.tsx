@@ -46,12 +46,12 @@ const DECISION_COLORS: Record<string, string> = {
 };
 
 const CATEGORY_COLORS = [
-  "#3b82f6",
+  "#0066FF",
+  "#00D4AA",
   "#8b5cf6",
-  "#06b6d4",
   "#f59e0b",
   "#ef4444",
-  "#10b981",
+  "#06b6d4",
   "#ec4899",
   "#f97316",
   "#6366f1",
@@ -69,10 +69,10 @@ function ChartCard({
 }) {
   return (
     <div
-      className={`bg-surface-card border border-surface-border rounded-xl ${className}`}
+      className={`bg-surface-card border border-surface-border rounded-xl transition-all duration-200 hover:border-surface-hover ${className}`}
     >
       <div className="px-5 py-4 border-b border-surface-border">
-        <h3 className="text-sm font-semibold text-gray-300">{title}</h3>
+        <h3 className="text-sm font-display font-semibold text-gray-300">{title}</h3>
       </div>
       <div className="p-5">{children}</div>
     </div>
@@ -222,9 +222,9 @@ export default function DashboardPage() {
   }));
 
   return (
-    <div>
+    <div className="animate-fade-in">
       <div className="mb-8">
-        <h2 className="text-2xl font-bold text-white">{t("dashboard.title")}</h2>
+        <h2 className="text-2xl font-display font-bold text-white">{t("dashboard.title")}</h2>
         <p className="text-sm text-gray-500 mt-1">{t("dashboard.subtitle")}</p>
       </div>
 
@@ -273,13 +273,13 @@ export default function DashboardPage() {
                     x2="0"
                     y2="1"
                   >
-                    <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#0066FF" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#0066FF" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="#2a2a2a"
+                  stroke="#21262D"
                   vertical={false}
                 />
                 <XAxis
@@ -302,7 +302,7 @@ export default function DashboardPage() {
                 <Area
                   type="monotone"
                   dataKey="total"
-                  stroke="#3b82f6"
+                  stroke="#0066FF"
                   strokeWidth={2}
                   fill="url(#spendGradient)"
                 />
@@ -399,7 +399,7 @@ export default function DashboardPage() {
               >
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="#2a2a2a"
+                  stroke="#21262D"
                   vertical={false}
                 />
                 <XAxis
@@ -452,7 +452,7 @@ export default function DashboardPage() {
               >
                 <CartesianGrid
                   strokeDasharray="3 3"
-                  stroke="#2a2a2a"
+                  stroke="#21262D"
                   vertical={false}
                 />
                 <XAxis
@@ -472,7 +472,7 @@ export default function DashboardPage() {
                 <Tooltip content={<BotTooltip />} />
                 <Bar
                   dataKey="total"
-                  fill="#2563eb"
+                  fill="#0047FF"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={60}
                 />
@@ -524,7 +524,7 @@ export default function DashboardPage() {
       {(suspiciousAlerts.length > 0 || nearLimitAlerts.length > 0) && (
         <div className="bg-surface-card border border-surface-border rounded-xl">
           <div className="px-5 py-4 border-b border-surface-border">
-            <h3 className="text-sm font-semibold text-gray-300">
+            <h3 className="text-sm font-display font-semibold text-gray-300">
               {t("dashboard.alerts")}
             </h3>
           </div>
@@ -532,24 +532,26 @@ export default function DashboardPage() {
             {suspiciousAlerts.map((a) => (
               <div
                 key={a.id}
-                className="flex items-center gap-3 px-5 py-3.5"
+                className="flex items-center gap-3 px-5 py-3.5 border-l-2 border-l-blocked"
               >
-                <div className="w-2 h-2 rounded-full bg-blocked" />
+                <svg className="w-4 h-4 text-blocked shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
                 <p className="text-sm text-gray-300">
-                  <span className="text-white font-medium">{a.name}</span> —{" "}
-                  {a.message}
+                  <span className="text-white font-medium">{a.name}</span> — {a.message}
                 </p>
               </div>
             ))}
             {nearLimitAlerts.map((a) => (
               <div
                 key={a.id}
-                className="flex items-center gap-3 px-5 py-3.5"
+                className="flex items-center gap-3 px-5 py-3.5 border-l-2 border-l-pending"
               >
-                <div className="w-2 h-2 rounded-full bg-pending" />
+                <svg className="w-4 h-4 text-pending shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
                 <p className="text-sm text-gray-300">
-                  <span className="text-white font-medium">{a.name}</span>{" "}
-                  {a.message}
+                  <span className="text-white font-medium">{a.name}</span> {a.message}
                 </p>
               </div>
             ))}

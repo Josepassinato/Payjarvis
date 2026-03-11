@@ -2,6 +2,13 @@
 
 import { useTranslation } from "react-i18next";
 
+const dotColors: Record<string, string> = {
+  APPROVED: "bg-approved",
+  BLOCKED: "bg-blocked",
+  PENDING_HUMAN: "bg-pending animate-pulse",
+  PENDING: "bg-pending animate-pulse",
+};
+
 const styles: Record<string, string> = {
   APPROVED: "bg-approved/10 text-approved border-approved/20",
   BLOCKED: "bg-blocked/10 text-blocked border-blocked/20",
@@ -20,10 +27,11 @@ export function DecisionBadge({ decision }: { decision: string }) {
   const { t } = useTranslation();
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+      className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
         styles[decision] ?? "bg-gray-800 text-gray-400 border-gray-700"
       }`}
     >
+      <span className={`w-1.5 h-1.5 rounded-full ${dotColors[decision] ?? "bg-gray-500"}`} />
       {labelKeys[decision] ? t(labelKeys[decision]) : decision}
     </span>
   );
