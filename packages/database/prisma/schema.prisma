@@ -112,8 +112,16 @@ model User {
   clerkId             String     @unique
   email               String     @unique
   fullName            String
+  dateOfBirth         DateTime?
+  documentNumber      String?
+  country             String?
+  address             Json?
   kycLevel            KycLevel   @default(NONE)
+  kycPhotoPath        String?
+  kycSubmittedAt      DateTime?
   status              UserStatus @default(PENDING_KYC)
+  onboardingStep      Int        @default(0)
+  termsAcceptedAt     DateTime?
   telegramChatId      String?
   notificationChannel String     @default("none") // "none" | "telegram" | "email"
   stripeAccountId     String?
@@ -121,13 +129,14 @@ model User {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 
-  bots              Bot[]
-  agents            Agent[]
-  transactions      Transaction[]
-  approvalRequests  ApprovalRequest[]
-  handoffRequests   HandoffRequest[]
-  telegramLinkCode  TelegramLinkCode?
-  paymentMethods    PaymentMethod[]
+  bots               Bot[]
+  agents             Agent[]
+  transactions       Transaction[]
+  approvalRequests   ApprovalRequest[]
+  handoffRequests    HandoffRequest[]
+  telegramLinkCode   TelegramLinkCode?
+  paymentMethods     PaymentMethod[]
+  instanceAssignment InstanceUser?
 
   @@map("users")
 }
@@ -211,6 +220,7 @@ model Bot {
   transactions     Transaction[]
   approvalRequests ApprovalRequest[]
   handoffRequests  HandoffRequest[]
+  integrations     BotIntegration[]
 
   @@index([ownerId])
   @@map("bots")
@@ -228,6 +238,7 @@ model Policy {
   allowedDays        Int[]    @default([1, 2, 3, 4, 5]) // 0=Sun, 6=Sat
   allowedHoursStart  Int      @default(8)
   allowedHoursEnd    Int      @default(22)
+  timezone           String   @default("America/New_York")
   allowedCategories  String[] @default([])
   blockedCategories  String[] @default([])
   merchantWhitelist  String[] @default([])
@@ -399,6 +410,26 @@ model PlatformRegistration {
   @@map("platform_registrations")
 }
 
+// ─── Bot Integrations (third-party providers) ───
+
+model BotIntegration {
+  id          String    @id @default(cuid())
+  botId       String
+  provider    String    // e.g. "amadeus", "opentable", "uber_eats", "ticketmaster"
+  category    String    // e.g. "travel", "restaurants", "events", "marketplace"
+  enabled     Boolean   @default(false)
+  connectedAt DateTime?
+  config      Json?     // provider-specific config (tokens, preferences)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, provider])
+  @@index([botId])
+  @@map("bot_integrations")
+}
+
 // ─── Audit Log ───
 
 model AuditLog {
@@ -416,4 +447,71 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ─── Policy Decision Log ───
+
+model PolicyDecisionLog {
+  id         String   @id @default(cuid())
+  botId      String
+  action     Json     // { type, provider, amount, category, merchantId }
+  allowed    Boolean
+  reason     String
+  trustLevel String   // RESTRICTED|STANDARD|TRUSTED|AUTONOMOUS
+  layer      Int      @default(1) // 1=core, 2=api, 3=composio, 4=browserbase
+  createdAt  DateTime @default(now())
+
+  @@index([botId])
+  @@index([createdAt])
+  @@map("policy_decision_logs")
+}
+
+// ─── OpenClaw Instance Management ───
+
+model OpenClawInstance {
+  id          String   @id @default(cuid())
+  name        String   // "instance-01", "instance-02"
+  processName String   // nome no PM2
+  port        Int      @unique
+  capacity    Int      @default(100)
+  currentLoad Int      @default(0)
+  status      String   @default("ACTIVE") // ACTIVE|FULL|OFFLINE
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users InstanceUser[]
+
+  @@index([status])
+  @@map("openclaw_instances")
+}
+
+model InstanceUser {
+  id         String   @id @default(cuid())
+  userId     String   @unique // usuario so pode estar em 1 instancia
+  instanceId String
+  assignedAt DateTime @default(now())
+
+  instance OpenClawInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId])
+  @@map("instance_users")
+}
+
+// ─── Commerce Search Log ───
+
+model CommerceSearchLog {
+  id          String   @id @default(cuid())
+  botId       String
+  service     String   // flights, hotels, restaurants, events, transport, delivery
+  params      Json
+  resultCount Int
+  cached      Boolean  @default(false)
+  durationMs  Int
+  createdAt   DateTime @default(now())
+
+  @@index([botId])
+  @@index([service])
+  @@index([createdAt])
+  @@map("commerce_search_logs")
 }

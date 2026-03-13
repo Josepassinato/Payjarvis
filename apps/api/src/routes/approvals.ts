@@ -91,9 +91,14 @@ async function expireApprovals() {
 }
 
 export async function approvalRoutes(app: FastifyInstance) {
+  const env = process.env.BDIT_ENV ?? process.env.NODE_ENV ?? "development";
+  const issuerName = env === "production" ? "payjarvis" : `payjarvis-${env}`;
+  const defaultKid = `payjarvis-${env}-001`;
+
   const issuer = new BditIssuer(
     (process.env.PAYJARVIS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
-    process.env.PAYJARVIS_KEY_ID ?? "payjarvis-key-001"
+    process.env.PAYJARVIS_KEY_ID ?? defaultKid,
+    issuerName
   );
 
   // Start background expiration job — every 60 seconds

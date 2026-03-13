@@ -16,6 +16,23 @@ import {
   discoverOpenClawBrowserPort,
   getOpenClawBrowserInfo,
 } from "./openclaw-bridge.js";
+import { HumanBehavior } from "./human-behavior.js";
+
+// Layer 4: Browserbase integration
+import {
+  createSession as bbCreateSession,
+  getSession as bbGetSession,
+  getSessionLiveURLs as bbGetLiveURLs,
+  closeSession as bbCloseSession,
+  listActiveSessions as bbListSessions,
+  isConfigured as bbIsConfigured,
+} from "./services/browserbase-client.js";
+import { assistedFallback } from "./services/assisted-fallback.js";
+import {
+  requestHandoff,
+  resolveHandoff,
+  type ObstacleType,
+} from "./services/handoff-manager.js";
 
 const app = Fastify({ logger: true });
 
@@ -29,6 +46,9 @@ let lastActivity: Date | null = null;
 let connectedBotApiKey: string | null = null;
 let connectedBotId: string | null = null;
 const detector = new CheckoutDetector();
+
+// Cookie cache per domain (in-memory, persists across navigations within session)
+const cookieCache = new Map<string, unknown[]>();
 
 // ─── Routes ──────────────────────────────────────────
 
@@ -238,9 +258,9 @@ app.post("/openclaw/tool-invoke", async (request, reply) => {
   return reply.status(400).send({ error: "Invalid action" });
 });
 
-/** Navegar para uma URL no Chrome via CDP */
+/** Navegar para uma URL no Chrome via CDP — com comportamento humano completo */
 app.post("/navigate", async (request, reply) => {
-  const body = request.body as { url: string; botId?: string };
+  const body = request.body as { url: string; botId?: string; searchTerm?: string };
 
   if (!body.url) {
     return reply.status(400).send({
@@ -321,25 +341,80 @@ app.post("/navigate", async (request, reply) => {
         pageWs.send(JSON.stringify({ id, method, params }));
       });
 
+    // Helper: wait for Page.loadEventFired
+    const waitForLoad = () =>
+      new Promise<void>((resolve) => {
+        let resolved = false;
+        const timeout = setTimeout(() => {
+          if (!resolved) { resolved = true; resolve(); }
+        }, 15000);
+        const handler = (data: Buffer) => {
+          const msg = JSON.parse(data.toString());
+          if (msg.method === "Page.loadEventFired") {
+            clearTimeout(timeout);
+            pageWs.off("message", handler);
+            if (!resolved) { resolved = true; resolve(); }
+          }
+        };
+        pageWs.on("message", handler);
+      });
+
     // Enable Page and Network events
     await sendCmd("Page.enable");
     await sendCmd("Network.enable");
 
-    // Override User-Agent to avoid headless detection
-    await sendCmd("Network.setUserAgentOverride", {
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      acceptLanguage: "en-US,en;q=0.9",
-      platform: "Win32",
-    });
+    // Apply full stealth profile (fingerprint, viewport, anti-detection, geolocation, timezone)
+    const stealthInfo = await HumanBehavior.applyStealthProfile(sendCmd);
+    app.log.info(
+      { ua: stealthInfo.userAgent.substring(0, 50), viewport: `${stealthInfo.viewport.width}x${stealthInfo.viewport.height}` },
+      "Stealth profile applied"
+    );
 
-    // Disable webdriver flag
-    await sendCmd("Page.addScriptToEvaluateOnNewDocument", {
-      source:
-        "Object.defineProperty(navigator, 'webdriver', { get: () => false });",
-    });
+    // ─── Camada 3: Restore cached cookies before navigation ───
+    const isAmazon = body.url.includes("amazon");
+    if (isAmazon) {
+      const cachedCookies = cookieCache.get("amazon");
+      if (cachedCookies && cachedCookies.length > 0) {
+        await HumanBehavior.restoreCookies(sendCmd, cachedCookies as any);
+        app.log.info({ count: cachedCookies.length }, "Restored cached Amazon cookies");
+      }
+    }
 
-    // Navigate
+    // ─── Camada 3: Realistic navigation with homepage visit ───
+    const shouldVisitHomepage = isAmazon && Math.random() > 0.4;
+
+    if (shouldVisitHomepage) {
+      // Set referer as if coming from Google
+      const searchTerm = body.searchTerm || body.url.match(/[?&]k=([^&]+)/)?.[1];
+      const referers = [
+        "https://www.google.com/",
+        "https://www.google.com.br/",
+        searchTerm ? `https://www.google.com.br/search?q=${encodeURIComponent(decodeURIComponent(searchTerm))}` : "",
+      ].filter(Boolean);
+      const referer = referers[Math.floor(Math.random() * referers.length)];
+
+      await sendCmd("Network.setExtraHTTPHeaders", {
+        headers: { Referer: referer },
+      });
+
+      // Visit Amazon homepage first
+      app.log.info("Visiting Amazon homepage first for realistic browsing pattern");
+      const homepageUrl = body.url.includes("amazon.com.br")
+        ? "https://www.amazon.com.br/"
+        : "https://www.amazon.com/";
+      const homeNav = await sendCmd("Page.navigate", { url: homepageUrl });
+      if (!(homeNav as any).errorText) {
+        await waitForLoad();
+        await HumanBehavior.simulateAfterLoad(sendCmd);
+      }
+    } else if (isAmazon) {
+      // Direct navigation but with Google referer
+      await sendCmd("Network.setExtraHTTPHeaders", {
+        headers: { Referer: "https://www.google.com.br/" },
+      });
+    }
+
+    // Navigate to actual target URL
     const navResult = await sendCmd("Page.navigate", { url: body.url });
     if ((navResult as any).errorText) {
       pageWs.close();
@@ -349,31 +424,11 @@ app.post("/navigate", async (request, reply) => {
       });
     }
 
-    // Wait for load event (timeout 15s)
-    await new Promise<void>((resolve) => {
-      let resolved = false;
-      const timeout = setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          resolve();
-        }
-      }, 15000);
-      const handler = (data: Buffer) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.method === "Page.loadEventFired") {
-          clearTimeout(timeout);
-          pageWs.off("message", handler);
-          if (!resolved) {
-            resolved = true;
-            resolve();
-          }
-        }
-      };
-      pageWs.on("message", handler);
-    });
+    // Wait for load event
+    await waitForLoad();
 
-    // Wait for JS rendering then extract page info
-    await new Promise((r) => setTimeout(r, 1000));
+    // Simulate human behavior after page loads (mouse, scroll, reading)
+    await HumanBehavior.simulateAfterLoad(sendCmd);
 
     const titleResult = await sendCmd("Runtime.evaluate", {
       expression: "document.title",
@@ -389,53 +444,67 @@ app.post("/navigate", async (request, reply) => {
     const finalUrl =
       (urlResult as any)?.result?.value ?? body.url;
 
-    // ─── Detect obstacles (CAPTCHA, 2FA, login, errors) ───
-    const obstacleResult = await sendCmd("Runtime.evaluate", {
-      expression: `(() => {
-        const body = document.body?.innerText?.toLowerCase() || '';
-        const url = window.location.href;
-
-        // CAPTCHA
-        if (
-          document.querySelector('form[action*="captcha"]') ||
-          document.querySelector('#captchacharacters') ||
-          body.includes('enter the characters you see below') ||
-          body.includes('type the characters') ||
-          url.includes('/errors/validateCaptcha')
-        ) {
-          return JSON.stringify({ type: 'CAPTCHA', description: 'Captcha detectado na página' });
-        }
-
-        // 2FA / Login required
-        if (
-          document.querySelector('#auth-mfa-otpcode') ||
-          document.querySelector('#ap_password') ||
-          url.includes('/ap/signin') ||
-          url.includes('/ap/mfa')
-        ) {
-          return JSON.stringify({ type: 'AUTH', description: 'Login ou 2FA necessário' });
-        }
-
-        // Checkout / navigation errors
-        if (
-          (body.includes('sorry! something went wrong') && url.includes('amazon')) ||
-          body.includes('we could not process your order') ||
-          document.querySelector('#error-page')
-        ) {
-          return JSON.stringify({ type: 'NAVIGATION', description: 'Página de erro ou bloqueio detectado' });
-        }
-
-        return JSON.stringify({ type: null });
-      })()`,
-      returnByValue: true,
-    });
-
+    // ─── Camada 4: Enhanced block detection ───
+    const blockResult = await HumanBehavior.detectBlock(sendCmd);
     let obstacle: { type: string; description: string } | null = null;
-    try {
-      const parsed = JSON.parse((obstacleResult as any)?.result?.value ?? "{}");
-      if (parsed.type) obstacle = parsed;
-    } catch {
-      // ignore parse errors
+
+    if (blockResult.blocked) {
+      obstacle = {
+        type: blockResult.type === "captcha" ? "CAPTCHA"
+          : blockResult.type === "bot_detection" ? "BOT_DETECTION"
+          : blockResult.type === "auth" ? "AUTH"
+          : "NAVIGATION",
+        description: blockResult.description || "Block detected",
+      };
+      app.log.warn(
+        { blockType: blockResult.type, url: finalUrl },
+        "Block detected by human behavior layer"
+      );
+    } else {
+      // Legacy obstacle detection as fallback
+      const obstacleResult = await sendCmd("Runtime.evaluate", {
+        expression: `(() => {
+          const body = document.body?.innerText?.toLowerCase() || '';
+          const url = window.location.href;
+
+          if (
+            document.querySelector('form[action*="captcha"]') ||
+            document.querySelector('#captchacharacters') ||
+            body.includes('enter the characters you see below') ||
+            body.includes('type the characters') ||
+            url.includes('/errors/validateCaptcha')
+          ) {
+            return JSON.stringify({ type: 'CAPTCHA', description: 'Captcha detectado na página' });
+          }
+
+          if (
+            document.querySelector('#auth-mfa-otpcode') ||
+            document.querySelector('#ap_password') ||
+            url.includes('/ap/signin') ||
+            url.includes('/ap/mfa')
+          ) {
+            return JSON.stringify({ type: 'AUTH', description: 'Login ou 2FA necessário' });
+          }
+
+          if (
+            (body.includes('sorry! something went wrong') && url.includes('amazon')) ||
+            body.includes('we could not process your order') ||
+            document.querySelector('#error-page')
+          ) {
+            return JSON.stringify({ type: 'NAVIGATION', description: 'Página de erro ou bloqueio detectado' });
+          }
+
+          return JSON.stringify({ type: null });
+        })()`,
+        returnByValue: true,
+      });
+
+      try {
+        const parsed = JSON.parse((obstacleResult as any)?.result?.value ?? "{}");
+        if (parsed.type) obstacle = parsed;
+      } catch {
+        // ignore parse errors
+      }
     }
 
     // If obstacle detected, request handoff via PayJarvis API
@@ -473,6 +542,19 @@ app.post("/navigate", async (request, reply) => {
       }
     }
 
+    // ─── Camada 3: Save cookies after successful navigation ───
+    if (isAmazon && !obstacle) {
+      try {
+        const cookies = await HumanBehavior.saveCookies(sendCmd);
+        if (cookies.length > 0) {
+          cookieCache.set("amazon", cookies);
+          app.log.info({ count: cookies.length }, "Cached Amazon cookies for session persistence");
+        }
+      } catch {
+        // Non-critical, ignore
+      }
+    }
+
     // Wait for product elements to render (poll up to 10s)
     // Try multiple selectors Amazon uses across different layouts
     await sendCmd("Runtime.evaluate", {
@@ -503,6 +585,12 @@ app.post("/navigate", async (request, reply) => {
       awaitPromise: true,
       returnByValue: true,
     });
+
+    // Simulate scrolling through products (human would scan results)
+    if (isAmazon && !obstacle) {
+      await HumanBehavior.humanScroll(sendCmd, 300 + Math.floor(Math.random() * 400));
+      await HumanBehavior.delays.betweenProducts();
+    }
 
     // Extract structured products (Amazon search results)
     const productsResult = await sendCmd("Runtime.evaluate", {
@@ -538,7 +626,7 @@ app.post("/navigate", async (request, reply) => {
           if (!price) {
             const whole = item.querySelector('.a-price-whole')?.textContent?.trim();
             const frac = item.querySelector('.a-price-fraction')?.textContent?.trim();
-            if (whole) price = '$' + whole + (frac || '00');
+            if (whole) price = 'R$' + whole + (frac || '00');
           }
 
           // Link
@@ -584,8 +672,9 @@ app.post("/navigate", async (request, reply) => {
     // Close page-level WS
     pageWs.close();
 
+    const sessionInfo = HumanBehavior.getSessionInfo();
     app.log.info(
-      { url: body.url, finalUrl, title, productCount: products.length },
+      { url: body.url, finalUrl, title, productCount: products.length, ...sessionInfo },
       "Navigation completed"
     );
 
@@ -610,6 +699,240 @@ app.post("/navigate", async (request, reply) => {
 });
 
 
+// ─── Layer 4: Browserbase Routes ─────────────────────
+
+/** Create a Browserbase cloud browser session */
+app.post("/browser/session/create", async (request, reply) => {
+  if (!bbIsConfigured()) {
+    return reply.status(503).send({
+      success: false,
+      error: "Browserbase is not configured (missing BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID)",
+    });
+  }
+
+  const body = request.body as {
+    keepAlive?: boolean;
+    proxies?: boolean;
+    timeout?: number;
+    region?: string;
+  } | undefined;
+
+  try {
+    const result = await bbCreateSession({
+      keepAlive: body?.keepAlive,
+      proxies: body?.proxies,
+      timeout: body?.timeout,
+      region: body?.region as any,
+    });
+
+    app.log.info(
+      { sessionId: result.sessionId },
+      "Browserbase session created"
+    );
+
+    return {
+      success: true,
+      data: {
+        sessionId: result.sessionId,
+        connectUrl: result.connectUrl,
+        status: result.session.status,
+        expiresAt: result.session.expiresAt,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to create session";
+    app.log.error({ err }, "Browserbase session creation failed");
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
+/** Get live view URL for a session */
+app.get("/browser/session/:id/live", async (request, reply) => {
+  const { id } = request.params as { id: string };
+
+  try {
+    const liveURLs = await bbGetLiveURLs(id);
+    return {
+      success: true,
+      data: {
+        sessionId: id,
+        debuggerUrl: liveURLs.debuggerUrl,
+        debuggerFullscreenUrl: liveURLs.debuggerFullscreenUrl,
+        wsUrl: liveURLs.wsUrl,
+        pages: liveURLs.pages,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to get live URLs";
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
+/** Close a Browserbase session */
+app.post("/browser/session/:id/close", async (request, reply) => {
+  const { id } = request.params as { id: string };
+
+  try {
+    const session = await bbCloseSession(id);
+    app.log.info({ sessionId: id }, "Browserbase session closed");
+    return {
+      success: true,
+      data: { sessionId: id, status: session.status },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to close session";
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
+/** Initiate assisted fallback for an action */
+app.post("/browser/fallback", async (request, reply) => {
+  if (!bbIsConfigured()) {
+    return reply.status(503).send({
+      success: false,
+      error: "Browserbase is not configured",
+    });
+  }
+
+  const body = request.body as {
+    botId: string;
+    url: string;
+    task: string;
+    params?: Record<string, unknown>;
+  };
+
+  if (!body.botId || !body.url || !body.task) {
+    return reply.status(400).send({
+      success: false,
+      error: "botId, url, and task are required",
+    });
+  }
+
+  try {
+    const result = await assistedFallback(body.botId, {
+      url: body.url,
+      task: body.task,
+      params: body.params,
+    });
+
+    app.log.info(
+      {
+        sessionId: result.sessionId,
+        status: result.status,
+        botId: body.botId,
+        task: body.task,
+      },
+      "Assisted fallback completed"
+    );
+
+    // If needs handoff, automatically request it
+    if (result.status === "NEEDS_HANDOFF" && result.result) {
+      const obstacleResult = result.result as {
+        obstacleType?: string;
+        description?: string;
+        currentUrl?: string;
+      };
+
+      const handoff = await requestHandoff(
+        result.sessionId,
+        body.botId,
+        {
+          type: (obstacleResult.obstacleType as ObstacleType) ?? "OTHER",
+          description: obstacleResult.description,
+          currentUrl: obstacleResult.currentUrl,
+        }
+      );
+
+      return {
+        success: true,
+        data: {
+          ...result,
+          handoff,
+        },
+      };
+    }
+
+    return { success: true, data: result };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Fallback failed";
+    app.log.error({ err, botId: body.botId }, "Assisted fallback error");
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
+/** Transfer control to user (request handoff) */
+app.post("/browser/handoff/:sessionId", async (request, reply) => {
+  const { sessionId } = request.params as { sessionId: string };
+  const body = request.body as {
+    botId: string;
+    obstacleType?: string;
+    description?: string;
+    currentUrl?: string;
+  };
+
+  if (!body.botId) {
+    return reply.status(400).send({
+      success: false,
+      error: "botId is required",
+    });
+  }
+
+  try {
+    const result = await requestHandoff(sessionId, body.botId, {
+      type: (body.obstacleType as ObstacleType) ?? "OTHER",
+      description: body.description,
+      currentUrl: body.currentUrl,
+    });
+
+    if (result.success) {
+      app.log.info(
+        {
+          sessionId,
+          handoffId: result.handoffId,
+          obstacleType: result.obstacleType,
+        },
+        "Handoff requested"
+      );
+    }
+
+    return { success: result.success, data: result };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Handoff failed";
+    app.log.error({ err, sessionId }, "Handoff error");
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
+/** List active Browserbase sessions */
+app.get("/browser/sessions", async (_request, reply) => {
+  if (!bbIsConfigured()) {
+    return reply.status(503).send({
+      success: false,
+      error: "Browserbase is not configured",
+    });
+  }
+
+  try {
+    const sessions = await bbListSessions();
+    return {
+      success: true,
+      data: {
+        count: sessions.length,
+        sessions: sessions.map((s) => ({
+          id: s.id,
+          status: s.status,
+          createdAt: s.createdAt,
+          expiresAt: s.expiresAt,
+          region: s.region,
+        })),
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to list sessions";
+    return reply.status(500).send({ success: false, error: message });
+  }
+});
+
 // ─── Start ───────────────────────────────────────────
 
 const port = parseInt(
@@ -623,4 +946,33 @@ try {
 } catch (err) {
   app.log.error(err);
   process.exit(1);
+}
+
+// ─── Auto-connect CDP on boot ─────────────────────────
+const autoConnectBotApiKey = process.env.BROWSER_AGENT_BOT_API_KEY;
+const autoConnectBotId = process.env.BROWSER_AGENT_BOT_ID;
+const autoConnectCdpPort = parseInt(process.env.OPENCLAW_CDP_PORT ?? "18800", 10);
+
+if (autoConnectBotApiKey && autoConnectBotId) {
+  setTimeout(async () => {
+    try {
+      const res = await app.inject({
+        method: "POST",
+        url: "/connect",
+        payload: {
+          port: autoConnectCdpPort,
+          botApiKey: autoConnectBotApiKey,
+          botId: autoConnectBotId,
+        },
+      });
+      const data = JSON.parse(res.body);
+      if (data.success) {
+        app.log.info({ port: autoConnectCdpPort }, "Auto-connect CDP succeeded");
+      } else {
+        app.log.warn({ error: data.error }, "Auto-connect CDP failed — Chrome may not be running yet");
+      }
+    } catch (err) {
+      app.log.warn({ err }, "Auto-connect CDP error");
+    }
+  }, 2000);
 }

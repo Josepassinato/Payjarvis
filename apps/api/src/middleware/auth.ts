@@ -21,15 +21,16 @@ async function ensureUser(clerkId: string, email?: string, fullName?: string): P
   const existing = await prisma.user.findUnique({ where: { clerkId } });
   if (existing) return existing.id;
 
-  // First login — create user with KYC level 1 (email verified by Clerk)
-  const kycLevel = 1;
+  // First login — create user pending onboarding
+  const kycLevel = 0;
   const user = await prisma.user.create({
     data: {
       clerkId,
       email: email ?? `${clerkId}@clerk.user`,
       fullName: fullName ?? "PayJarvis User",
-      kycLevel: "BASIC", // level 1
-      status: "ACTIVE",
+      kycLevel: "NONE",
+      status: "PENDING_KYC",
+      onboardingStep: 0,
     },
   });
 

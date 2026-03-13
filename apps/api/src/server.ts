@@ -17,6 +17,11 @@ import { handoffRoutes } from "./routes/handoffs.js";
 import { onboardingRoutes } from "./routes/onboarding.routes.js";
 import { paymentMethodRoutes } from "./routes/payment-methods.js";
 import { agentRoutes } from "./routes/agents.js";
+import { commerceRoutes } from "./routes/commerce.js";
+import { composioRoutes } from "./routes/composio.js";
+import { coreRoutes } from "./routes/core.js";
+import { instanceRoutes } from "./routes/instances.js";
+import { startTimeoutChecker } from "./core/approval-manager.js";
 
 const app = Fastify({ logger: true });
 
@@ -43,6 +48,18 @@ await app.register(platformRoutes);
 await app.register(merchantRoutes);
 await app.register(integrationRoutes);
 await app.register(paymentMethodRoutes);
+
+// Core — Layer 1: policy, approvals, audit, sessions
+await app.register(coreRoutes);
+
+// Commerce — flights, hotels, restaurants, events, transport, delivery
+await app.register(commerceRoutes);
+
+// Composio — Gmail, Google Calendar, Slack integrations
+await app.register(composioRoutes);
+
+// Instance management — slot manager, user router, spawner
+await app.register(instanceRoutes);
 
 // Onboarding — platform detection and integration guides
 await app.register(onboardingRoutes);
@@ -82,6 +99,7 @@ const port = parseInt(process.env.API_PORT ?? "3001", 10);
 try {
   await app.listen({ port, host: "0.0.0.0" });
   console.log(`PayJarvis API listening on port ${port}`);
+  startTimeoutChecker();
 } catch (err) {
   app.log.error(err);
   process.exit(1);

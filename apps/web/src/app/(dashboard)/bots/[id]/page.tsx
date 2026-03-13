@@ -21,6 +21,7 @@ const defaultPolicy: PolicyForm = {
   allowedDays: [1, 2, 3, 4, 5],
   allowedHoursStart: 8,
   allowedHoursEnd: 22,
+  timezone: "America/New_York",
   allowedCategories: [],
   blockedCategories: [],
   merchantWhitelist: [],
@@ -421,6 +422,20 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
           <div className="bg-surface-card border border-surface-border rounded-xl p-5 mb-6">
             <h3 className="text-sm font-semibold text-gray-300 mb-4">{t("botDetail.timeWindow")}</h3>
             <div className="mb-4">
+              <label className="block text-xs text-gray-500 mb-1">{t("botDetail.timezone")}</label>
+              <select value={policy.timezone || "America/New_York"} onChange={(e) => updateField("timezone", e.target.value)} className="w-full bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
+                {[
+                  "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles", "America/Denver",
+                  "America/Chicago", "America/New_York", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+                  "Atlantic/Reykjavik", "Europe/London", "Europe/Paris", "Europe/Berlin",
+                  "Europe/Lisbon", "Europe/Moscow", "Asia/Dubai", "Asia/Kolkata",
+                  "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+                ].map((tz) => (
+                  <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+                ))}
+              </select>
+            </div>
+            <div className="mb-4">
               <p className="text-xs text-gray-500 mb-2">{t("botDetail.allowedDays")}</p>
               <div className="flex gap-2">
                 {dayNames.map((dayName, i) => (
@@ -443,7 +458,7 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 <label className="block text-xs text-gray-500 mb-1">{t("botDetail.start")}</label>
                 <select value={policy.allowedHoursStart} onChange={(e) => updateField("allowedHoursStart", Number(e.target.value))} className="bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
                   {Array.from({ length: 24 }, (_, i) => (
-                    <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
+                    <option key={i} value={i}>{i === 0 ? "12:00am" : i === 12 ? "12:00pm" : i < 12 ? `${i}:00am` : `${i - 12}:00pm`}</option>
                   ))}
                 </select>
               </div>
@@ -452,7 +467,7 @@ export default function BotDetailPage({ params }: { params: { id: string } }) {
                 <label className="block text-xs text-gray-500 mb-1">{t("botDetail.end")}</label>
                 <select value={policy.allowedHoursEnd} onChange={(e) => updateField("allowedHoursEnd", Number(e.target.value))} className="bg-surface border border-surface-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-brand-500">
                   {Array.from({ length: 24 }, (_, i) => (
-                    <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
+                    <option key={i} value={i}>{i === 0 ? "12:00am" : i === 12 ? "12:00pm" : i < 12 ? `${i}:00am` : `${i - 12}:00pm`}</option>
                   ))}
                 </select>
               </div>

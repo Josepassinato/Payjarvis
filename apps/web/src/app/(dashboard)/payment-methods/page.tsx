@@ -13,6 +13,20 @@ const STRIPE_PK = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
 
 const stripePromise = STRIPE_PK ? loadStripe(STRIPE_PK) : null;
 
+const stripeElementsOptions = {
+  appearance: {
+    theme: "night" as const,
+    variables: {
+      colorPrimary: "#2563eb",
+      colorBackground: "#1e2330",
+      colorText: "#e5e7eb",
+      colorDanger: "#ef4444",
+      fontFamily: '"DM Sans", system-ui, sans-serif',
+      borderRadius: "8px",
+    },
+  },
+};
+
 interface PaymentMethodRecord {
   id: string;
   userId: string;
@@ -66,6 +80,7 @@ function CardForm({ onSuccess, onError }: { onSuccess: (card: { brand: string; l
       const intentRes = await fetch(`${API_URL}/payment-methods/setup-intent`, {
         method: "POST",
         headers,
+        body: JSON.stringify({}),
       });
       const intentJson = await intentRes.json();
       if (!intentRes.ok || !intentJson.success) {
@@ -338,7 +353,7 @@ export default function PaymentMethodsPage() {
                     {/* Inline card form */}
                     {card.id === "stripe" && showCardForm && stripePromise && (
                       <div className="space-y-2">
-                        <Elements stripe={stripePromise}>
+                        <Elements stripe={stripePromise} options={stripeElementsOptions}>
                           <CardForm onSuccess={handleCardSuccess} onError={handleCardError} />
                         </Elements>
                         <button
@@ -359,7 +374,7 @@ export default function PaymentMethodsPage() {
                   </div>
                 ) : card.id === "stripe" && showCardForm && stripePromise ? (
                   <div className="space-y-2">
-                    <Elements stripe={stripePromise}>
+                    <Elements stripe={stripePromise} options={stripeElementsOptions}>
                       <CardForm onSuccess={handleCardSuccess} onError={handleCardError} />
                     </Elements>
                     <button

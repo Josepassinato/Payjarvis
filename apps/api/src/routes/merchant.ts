@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { prisma } from "@payjarvis/database";
 import { createAuditLog } from "../services/audit.js";
 import { updateTrustScore } from "../services/trust-score.js";
-import { redisExists, redisSet } from "../services/redis.js";
+import { redisExists, redisSetNX, redisDel } from "../services/redis.js";
 import { createHash } from "node:crypto";
 
 export async function merchantRoutes(app: FastifyInstance) {
@@ -30,9 +30,16 @@ export async function merchantRoutes(app: FastifyInstance) {
       return reply.status(401).send({ success: false, error: "Invalid merchant key" });
     }
 
+    // Atomic gate: only one request can claim this token
+    const claimed = await redisSetNX(`bdit:used:${jti}`, "1", 600);
+    if (!claimed) {
+      return reply.status(409).send({ success: false, error: "Token already used" });
+    }
+
     // Find the token
     const token = await prisma.bditToken.findUnique({ where: { jti } });
     if (!token) {
+      await redisDel(`bdit:used:${jti}`);
       return reply.status(404).send({ success: false, error: "Token not found" });
     }
 
@@ -41,17 +48,15 @@ export async function merchantRoutes(app: FastifyInstance) {
     }
 
     if (token.status === "EXPIRED" || token.expiresAt < new Date()) {
+      await redisDel(`bdit:used:${jti}`);
       return reply.status(409).send({ success: false, error: "Token expired" });
     }
 
-    // Mark as used
+    // Mark as used in database
     await prisma.bditToken.update({
       where: { jti },
       data: { status: "USED", usedAt: new Date(), merchantId: merchant.id },
     });
-
-    // Mark in Redis
-    await redisSet(`bdit:used:${jti}`, "1", 600);
 
     await createAuditLog({
       entityType: "bdit",

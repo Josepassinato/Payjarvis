@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc",
     "generate-keys": "ts-node src/generate-keys.ts",
+    "rotate-keys": "ts-node src/rotate-keys.ts",
     "lint": "echo 'no lint configured'"
   },
   "dependencies": {

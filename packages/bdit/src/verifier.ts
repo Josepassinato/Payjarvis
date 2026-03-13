@@ -13,28 +13,32 @@ export class BditVerifier {
   private jwksCache?: ReturnType<typeof createRemoteJWKSet>;
   private jwksCacheCreatedAt = 0;
   private jwksCacheTtlMs: number;
+  private issuerName: string;
 
   /**
    * Create a verifier using a local public key (no API call needed)
    */
-  static fromPublicKey(publicKeyPem: string): BditVerifier {
+  static fromPublicKey(publicKeyPem: string, issuer?: string): BditVerifier {
     const verifier = new BditVerifier();
     verifier.publicKeyPem = publicKeyPem;
+    if (issuer) verifier.issuerName = issuer;
     return verifier;
   }
 
   /**
    * Create a verifier using a JWKS endpoint with 24h cache
    */
-  static fromJwks(jwksUrl: string, cacheTtlMs = 24 * 60 * 60 * 1000): BditVerifier {
+  static fromJwks(jwksUrl: string, cacheTtlMs = 24 * 60 * 60 * 1000, issuer?: string): BditVerifier {
     const verifier = new BditVerifier();
     verifier.jwksUrl = jwksUrl;
     verifier.jwksCacheTtlMs = cacheTtlMs;
+    if (issuer) verifier.issuerName = issuer;
     return verifier;
   }
 
   private constructor() {
     this.jwksCacheTtlMs = 24 * 60 * 60 * 1000;
+    this.issuerName = "payjarvis";
   }
 
   private getJwks(): ReturnType<typeof createRemoteJWKSet> {
@@ -53,14 +57,14 @@ export class BditVerifier {
       if (this.publicKeyPem) {
         const publicKey = await importSPKI(this.publicKeyPem, "RS256");
         result = await jwtVerify(token, publicKey, {
-          issuer: "payjarvis",
+          issuer: this.issuerName,
           algorithms: ["RS256"],
         });
       } else if (this.jwksUrl) {
         const jwks = this.getJwks();
         try {
           result = await jwtVerify(token, jwks, {
-            issuer: "payjarvis",
+            issuer: this.issuerName,
             algorithms: ["RS256"],
           });
         } catch (err) {
@@ -68,7 +72,7 @@ export class BditVerifier {
           this.jwksCache = createRemoteJWKSet(new URL(this.jwksUrl));
           this.jwksCacheCreatedAt = Date.now();
           result = await jwtVerify(token, this.jwksCache, {
-            issuer: "payjarvis",
+            issuer: this.issuerName,
             algorithms: ["RS256"],
           });
         }

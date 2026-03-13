@@ -5,20 +5,44 @@
  * Verifica um BDIT token e retorna informações do bot
  * e da autorização de pagamento.
  *
- * Rate limit: 1000 req/min por IP
+ * Rate limit: 100 req/min por IP (configurable via VERIFY_RATE_LIMIT_MAX)
  * Cache: resposta cacheável por 60s
  */
 
 import type { FastifyInstance } from "fastify";
+import rateLimit from "@fastify/rate-limit";
 import { BditVerifier } from "@payjarvis/bdit";
 import { prisma } from "@payjarvis/database";
 import { redisExists } from "../../services/redis.js";
 
+function getIssuerName(): string {
+  const env = process.env.BDIT_ENV ?? process.env.NODE_ENV ?? "development";
+  if (env === "production") return "payjarvis";
+  return `payjarvis-${env}`;
+}
+
 export async function publicVerifyRoutes(app: FastifyInstance) {
+  // Rate limit: 100 req/min per IP on verify endpoints
+  // Conservative initial limit — increase after monitoring real traffic.
+  // Applies only to routes registered within this plugin scope.
+  await app.register(rateLimit, {
+    max: parseInt(process.env.VERIFY_RATE_LIMIT_MAX ?? "100", 10),
+    timeWindow: parseInt(process.env.VERIFY_RATE_LIMIT_WINDOW_MS ?? "60000", 10),
+    keyGenerator: (request) => request.ip,
+    errorResponseBuilder: (_request, context) => ({
+      statusCode: 429,
+      verified: false,
+      error: "Rate limit exceeded",
+      retryAfter: context.after,
+    }),
+  });
+  const issuerName = getIssuerName();
+
   const verifier = BditVerifier.fromJwks(
     process.env.JWKS_PUBLIC_URL ??
       "https://api.payjarvis.com/.well-known/jwks.json",
-    24 * 60 * 60 * 1000 // 24h cache
+    24 * 60 * 60 * 1000, // 24h cache
+    issuerName
   );
 
   // Fallback: use local public key if available
@@ -27,7 +51,7 @@ export async function publicVerifyRoutes(app: FastifyInstance) {
     "\n"
   );
   const localVerifier = publicKeyPem
-    ? BditVerifier.fromPublicKey(publicKeyPem)
+    ? BditVerifier.fromPublicKey(publicKeyPem, issuerName)
     : null;
 
   // ─── GET /v1/verify ────────────────────────────────

@@ -24,10 +24,12 @@ export interface IssueTokenParams {
 export class BditIssuer {
   private privateKeyPem: string;
   private keyId: string;
+  private issuerName: string;
 
-  constructor(privateKeyPem: string, keyId: string) {
+  constructor(privateKeyPem: string, keyId: string, issuerName?: string) {
     this.privateKeyPem = privateKeyPem;
     this.keyId = keyId;
+    this.issuerName = issuerName ?? "payjarvis";
   }
 
   async issue(params: IssueTokenParams): Promise<{ token: string; jti: string; expiresAt: Date }> {
@@ -62,7 +64,7 @@ export class BditIssuer {
       .setProtectedHeader({ alg: "RS256", kid: this.keyId, typ: "JWT" })
       .setIssuedAt(now)
       .setExpirationTime(exp)
-      .setIssuer("payjarvis")
+      .setIssuer(this.issuerName)
       .setSubject(params.agentId ?? params.botId)
       .sign(privateKey);
 

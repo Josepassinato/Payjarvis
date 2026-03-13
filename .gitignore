@@ -9,12 +9,17 @@ dist/
 # Turborepo
 .turbo/
 
-# Environment files
+# Environment files (root and all subdirs)
 .env
 .env.local
 .env.*.local
 .env.production
+.env.development
+**/.env
+**/.env.local
+**/.env.production
 !.env.example
+!**/.env.example
 
 # Keys
 *.pem
@@ -39,6 +44,10 @@ yarn-error.log*
 __pycache__/
 venv/
 .venv/
+*.egg-info/
+
+# Backup files
+*.bak
 
 # Sandbox (dev workflow)
 sandbox/

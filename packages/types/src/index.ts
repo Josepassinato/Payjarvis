@@ -153,6 +153,7 @@ export interface PolicyConfig {
   allowedDays: number[];
   allowedHoursStart: number;
   allowedHoursEnd: number;
+  timezone: string;
   allowedCategories: string[];
   blockedCategories: string[];
   merchantWhitelist: string[];

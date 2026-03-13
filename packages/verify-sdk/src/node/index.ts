@@ -36,6 +36,8 @@ export interface VerifyOptions {
   publicKey?: string;
   /** Minimum trust score required (default: 0) */
   minTrustScore?: number;
+  /** Expected issuer (default: "payjarvis") */
+  issuer?: string;
 }
 
 export interface VerifyResult {
@@ -71,16 +73,26 @@ interface BditPayload extends JWTPayload {
   session_id: string;
 }
 
-// ─── JWKS Cache ──────────────────────────────────────
+// ─── JWKS Cache with TTL ─────────────────────────────
 
-const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+interface JwksCacheEntry {
+  jwks: ReturnType<typeof createRemoteJWKSet>;
+  createdAt: number;
+}
 
-function getJwks(url: string) {
-  let jwks = jwksCache.get(url);
-  if (!jwks) {
-    jwks = createRemoteJWKSet(new URL(url));
-    jwksCache.set(url, jwks);
+const JWKS_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const jwksCache = new Map<string, JwksCacheEntry>();
+
+function getJwks(url: string, forceRefresh = false): ReturnType<typeof createRemoteJWKSet> {
+  const now = Date.now();
+  const cached = jwksCache.get(url);
+
+  if (cached && !forceRefresh && (now - cached.createdAt) < JWKS_CACHE_TTL_MS) {
+    return cached.jwks;
   }
+
+  const jwks = createRemoteJWKSet(new URL(url));
+  jwksCache.set(url, { jwks, createdAt: now });
   return jwks;
 }
 
@@ -111,18 +123,36 @@ export async function verifyBdit(
   try {
     // Determine key source
     let key: KeyLike | ReturnType<typeof createRemoteJWKSet>;
+    const jwksUrl = options.jwksUrl ?? DEFAULT_JWKS_URL;
+    const expectedIssuer = options.issuer ?? "payjarvis";
 
     if (options.publicKey) {
       key = await importSPKI(options.publicKey, "RS256");
     } else {
-      key = getJwks(options.jwksUrl ?? DEFAULT_JWKS_URL);
+      key = getJwks(jwksUrl);
     }
 
-    // Verify JWT
-    const { payload } = await jwtVerify(token, key as KeyLike, {
-      issuer: "payjarvis",
-      algorithms: ["RS256"],
-    });
+    // Verify JWT — retry with refreshed JWKS on failure (handles key rotation)
+    let payload: JWTPayload;
+    try {
+      const result = await jwtVerify(token, key as KeyLike, {
+        issuer: expectedIssuer,
+        algorithms: ["RS256"],
+      });
+      payload = result.payload;
+    } catch (firstError) {
+      // If using JWKS (not static key), retry with forced refresh
+      if (!options.publicKey) {
+        key = getJwks(jwksUrl, true);
+        const result = await jwtVerify(token, key as KeyLike, {
+          issuer: expectedIssuer,
+          algorithms: ["RS256"],
+        });
+        payload = result.payload;
+      } else {
+        throw firstError;
+      }
+    }
 
     const p = payload as unknown as BditPayload;
 

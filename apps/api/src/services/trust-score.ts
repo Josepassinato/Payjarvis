@@ -22,12 +22,13 @@ const AGENT_DELTAS: Record<string, number> = {
   blocked_limit: -20,
   blocked_category: -30,
   blocked_merchant: -20,
+  blocked_time_window: -5,
   blocked_anomaly: -50,
   approval_timeout: -10,
   chargeback: -100,
 };
 
-const ANOMALY_RULES = new Set(["checkTimeWindow", "blocked_anomaly"]);
+const ANOMALY_RULES = new Set(["blocked_anomaly"]);
 
 export function getAgentScoreDelta(
   decision: string,
@@ -41,7 +42,7 @@ export function getAgentScoreDelta(
   if (decision === "BLOCKED") {
     if (ruleTriggered === "checkCategory") return AGENT_DELTAS.blocked_category;
     if (ruleTriggered === "checkMerchant") return AGENT_DELTAS.blocked_merchant;
-    if (ruleTriggered === "checkTimeWindow") return AGENT_DELTAS.blocked_anomaly;
+    if (ruleTriggered === "checkTimeWindow") return AGENT_DELTAS.blocked_time_window;
     if (ruleTriggered === "approval_timeout") return AGENT_DELTAS.approval_timeout;
     return AGENT_DELTAS.blocked_limit;
   }

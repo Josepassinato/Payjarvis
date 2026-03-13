@@ -4,9 +4,11 @@ import { BditIssuer } from "@payjarvis/bdit";
 import { requireAuth, getKycLevel } from "../middleware/auth.js";
 import {
   sendTelegramNotification,
+  sendAdminTelegramNotification,
   answerCallbackQuery,
   editMessageText,
 } from "../services/notifications.js";
+import { sendEmail, isEmailConfigured } from "../services/email.js";
 import { createAuditLog } from "../services/audit.js";
 import { updateTrustScore } from "../services/trust-score.js";
 import { emitApprovalEvent } from "./approvals.js";
@@ -43,7 +45,7 @@ export async function notificationRoutes(app: FastifyInstance) {
       success: true,
       data: {
         code,
-        instructions: `Envie /link ${code} para o bot @PayJarvisBot no Telegram. O código expira em 10 minutos.`,
+        instructions: `Send /link ${code} to @Jarvis12Brain_bot on Telegram. Code expires in 10 minutes.`,
       },
     };
   });
@@ -88,7 +90,7 @@ export async function notificationRoutes(app: FastifyInstance) {
       const messageId = cbq.message?.message_id;
 
       if (!callbackData) {
-        await answerCallbackQuery(callbackQueryId, "Dados inválidos.");
+        await answerCallbackQuery(callbackQueryId, "Invalid data.");
         return reply.send({ ok: true });
       }
 
@@ -102,7 +104,7 @@ export async function notificationRoutes(app: FastifyInstance) {
             where: { telegramChatId: fromId },
           });
           if (!user) {
-            await answerCallbackQuery(callbackQueryId, "Conta não vinculada.");
+            await answerCallbackQuery(callbackQueryId, "Account not linked.");
             return reply.send({ ok: true });
           }
 
@@ -111,12 +113,12 @@ export async function notificationRoutes(app: FastifyInstance) {
           });
 
           if (!handoff) {
-            await answerCallbackQuery(callbackQueryId, "Handoff não encontrado.");
+            await answerCallbackQuery(callbackQueryId, "Handoff not found.");
             return reply.send({ ok: true });
           }
 
           if (handoff.status === "RESOLVED" || handoff.status === "CANCELLED" || handoff.status === "EXPIRED") {
-            await answerCallbackQuery(callbackQueryId, `Já finalizado: ${handoff.status}`);
+            await answerCallbackQuery(callbackQueryId, `Already resolved: ${handoff.status}`);
             return reply.send({ ok: true });
           }
 
@@ -142,9 +144,9 @@ export async function notificationRoutes(app: FastifyInstance) {
               resolvedNote: "Resolved via Telegram",
             });
 
-            await answerCallbackQuery(callbackQueryId, "✅ Handoff concluído!");
+            await answerCallbackQuery(callbackQueryId, "✅ Handoff completed!");
             if (chatId && messageId) {
-              await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n✅ <b>CONCLUÍDO</b>`);
+              await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n✅ <b>COMPLETED</b>`);
             }
           } else {
             // handoff_cancel
@@ -184,7 +186,7 @@ export async function notificationRoutes(app: FastifyInstance) {
       // ── Handle approval callbacks ──
       const match = callbackData.match(/^(approve|reject):(.+)$/);
       if (!match) {
-        await answerCallbackQuery(callbackQueryId, "Ação não reconhecida.");
+        await answerCallbackQuery(callbackQueryId, "Unrecognized action.");
         return reply.send({ ok: true });
       }
 
@@ -196,7 +198,7 @@ export async function notificationRoutes(app: FastifyInstance) {
           where: { telegramChatId: fromId },
         });
         if (!user) {
-          await answerCallbackQuery(callbackQueryId, "Conta não vinculada.");
+          await answerCallbackQuery(callbackQueryId, "Account not linked.");
           return reply.send({ ok: true });
         }
 
@@ -207,17 +209,17 @@ export async function notificationRoutes(app: FastifyInstance) {
         });
 
         if (!approval) {
-          await answerCallbackQuery(callbackQueryId, "Aprovação não encontrada.");
+          await answerCallbackQuery(callbackQueryId, "Approval not found.");
           return reply.send({ ok: true });
         }
 
         if (approval.status !== "PENDING") {
-          await answerCallbackQuery(callbackQueryId, `Já respondido: ${approval.status}`);
+          await answerCallbackQuery(callbackQueryId, `Already responded: ${approval.status}`);
           if (chatId && messageId) {
             await editMessageText(
               chatId,
               messageId,
-              `${cbq.message.text ?? ""}\n\n⚠️ Já respondido: <b>${approval.status}</b>`
+              `${cbq.message.text ?? ""}\n\n⚠️ Already responded: <b>${approval.status}</b>`
             );
           }
           return reply.send({ ok: true });
@@ -240,7 +242,7 @@ export async function notificationRoutes(app: FastifyInstance) {
           await updateTrustScore(approval.botId, "BLOCKED", "approval_timeout", false, "system");
           emitApprovalEvent(user.id, "approval_expired", { id: approvalId, status: "EXPIRED" });
 
-          await answerCallbackQuery(callbackQueryId, "Aprovação expirada.");
+          await answerCallbackQuery(callbackQueryId, "Approval expired.");
           if (chatId && messageId) {
             await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n⏰ <b>Expirado</b>`);
           }
@@ -403,7 +405,7 @@ export async function notificationRoutes(app: FastifyInstance) {
     // Handle /start command
     if (text === "/start") {
       await sendTelegramNotification(chatId,
-        "PayJarvis Bot ativo.\n\nPara vincular sua conta, use:\n<code>/link SEU_CODIGO</code>\n\nGere o código no dashboard em Configurações > Notificações."
+        "PayJarvis Bot active.\n\nTo link your account, use:\n<code>/link YOUR_CODE</code>\n\nGenerate the code in your dashboard under Settings > Notifications."
       );
       return reply.send({ ok: true });
     }
@@ -420,7 +422,7 @@ export async function notificationRoutes(app: FastifyInstance) {
     const linkCode = await prisma.telegramLinkCode.findUnique({ where: { code } });
 
     if (!linkCode || linkCode.expiresAt < new Date()) {
-      await sendTelegramNotification(chatId, "❌ Código inválido ou expirado. Gere um novo código no dashboard.");
+      await sendTelegramNotification(chatId, "❌ Invalid or expired code. Generate a new code in your dashboard.");
       if (linkCode) await prisma.telegramLinkCode.delete({ where: { id: linkCode.id } });
       return reply.send({ ok: true });
     }
@@ -439,8 +441,179 @@ export async function notificationRoutes(app: FastifyInstance) {
 
     await sendTelegramNotification(
       chatId,
-      "✅ Conta vinculada! Você receberá notificações de aprovação aqui."
+      "✅ Account linked! You will receive approval notifications here."
     );
+
+    return reply.send({ ok: true });
+  });
+
+  // ── Email endpoint ──
+  app.post("/notifications/email", { preHandler: [requireAuth] }, async (request, reply) => {
+    const userId = (request as any).userId as string;
+    const user = await prisma.user.findUnique({ where: { clerkId: userId } });
+    if (!user) return reply.status(404).send({ success: false, error: "User not found" });
+
+    if (!isEmailConfigured()) {
+      return reply.status(503).send({ success: false, error: "Email service not configured" });
+    }
+
+    const { to, subject, html, text } = request.body as {
+      to?: string;
+      subject: string;
+      html: string;
+      text?: string;
+    };
+
+    if (!subject || !html) {
+      return reply.status(400).send({ success: false, error: "subject and html are required" });
+    }
+
+    const recipient = to || user.email;
+    if (!recipient) {
+      return reply.status(400).send({ success: false, error: "No recipient email" });
+    }
+
+    const result = await sendEmail({ to: recipient, subject, html, text });
+
+    await createAuditLog({
+      entityType: "notification",
+      entityId: result.messageId ?? "unknown",
+      action: "email.sent",
+      actorType: "user",
+      actorId: user.id,
+      payload: { to: recipient, subject, success: result.success },
+    });
+
+    return result;
+  });
+
+  // ── Email status endpoint ──
+  app.get("/notifications/email/status", { preHandler: [requireAuth] }, async () => {
+    return {
+      configured: isEmailConfigured(),
+      sender: process.env.ZOHO_EMAIL ?? null,
+    };
+  });
+
+  // Admin bot webhook — called by @Jarvis12Brain_bot for approval callbacks
+  app.post("/notifications/telegram/admin-webhook", async (request, reply) => {
+    const body = request.body as any;
+    const adminToken = process.env.ADMIN_TELEGRAM_BOT_TOKEN;
+    if (!adminToken) return reply.status(500).send({ ok: false, error: "Admin bot not configured" });
+
+    // Only handle callback queries (approve/reject buttons)
+    if (!body?.callback_query) return reply.send({ ok: true });
+
+    const cbq = body.callback_query;
+    const callbackData = cbq.data as string | undefined;
+    const callbackQueryId = cbq.id as string;
+    const fromId = String(cbq.from.id);
+    const chatId = cbq.message?.chat?.id;
+    const messageId = cbq.message?.message_id;
+
+    if (!callbackData) {
+      await answerCallbackQuery(callbackQueryId, "Invalid data.", adminToken);
+      return reply.send({ ok: true });
+    }
+
+    // Only process approval callbacks
+    const match = callbackData.match(/^(approve|reject):(.+)$/);
+    if (!match) {
+      await answerCallbackQuery(callbackQueryId, "Unrecognized action.", adminToken);
+      return reply.send({ ok: true });
+    }
+
+    const [, action, approvalId] = match;
+
+    // Verify the callback comes from admin chat
+    const adminChatId = process.env.ADMIN_TELEGRAM_CHAT_ID;
+    if (adminChatId && fromId !== adminChatId) {
+      await answerCallbackQuery(callbackQueryId, "Permission denied.", adminToken);
+      return reply.send({ ok: true });
+    }
+
+    try {
+      const approval = await prisma.approvalRequest.findFirst({
+        where: { id: approvalId },
+        include: { transaction: true, bot: { include: { policy: true, owner: true } } },
+      });
+
+      if (!approval) {
+        await answerCallbackQuery(callbackQueryId, "Approval not found.", adminToken);
+        return reply.send({ ok: true });
+      }
+
+      if (approval.status !== "PENDING") {
+        await answerCallbackQuery(callbackQueryId, `Already responded: ${approval.status}`, adminToken);
+        if (chatId && messageId) {
+          await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n⚠️ Already responded: <b>${approval.status}</b>`, adminToken);
+        }
+        return reply.send({ ok: true });
+      }
+
+      if (new Date() > approval.expiresAt) {
+        await prisma.approvalRequest.update({ where: { id: approvalId }, data: { status: "EXPIRED" } });
+        await prisma.transaction.update({ where: { id: approval.transactionId }, data: { decision: "BLOCKED", decisionReason: "Approval expired" } });
+        await prisma.bot.update({ where: { id: approval.botId }, data: { totalBlocked: { increment: 1 } } });
+        await updateTrustScore(approval.botId, "BLOCKED", "approval_timeout", false, "system");
+        emitApprovalEvent(approval.ownerId, "approval_expired", { id: approvalId, status: "EXPIRED" });
+        await answerCallbackQuery(callbackQueryId, "Approval expired.", adminToken);
+        if (chatId && messageId) {
+          await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n⏰ <b>Expirado</b>`, adminToken);
+        }
+        return reply.send({ ok: true });
+      }
+
+      if (action === "approve") {
+        await prisma.approvalRequest.update({ where: { id: approvalId }, data: { status: "APPROVED", respondedAt: new Date() } });
+
+        const policy = approval.bot.policy!;
+        const kycLevelNum = getKycLevel(approval.bot.owner.kycLevel);
+
+        const { token, jti, expiresAt } = await issuer.issue({
+          botId: approval.botId,
+          ownerId: approval.ownerId,
+          trustScore: approval.bot.trustScore,
+          kycLevel: kycLevelNum,
+          categories: policy.allowedCategories,
+          maxAmount: policy.maxPerTransaction,
+          merchantId: approval.transaction.merchantId ?? "",
+          amount: approval.amount,
+          category: approval.category,
+          sessionId: randomUUID(),
+        });
+
+        await prisma.bditToken.create({ data: { jti, tokenValue: token, botId: approval.botId, amount: approval.amount, category: approval.category, expiresAt } });
+        await prisma.transaction.update({ where: { id: approval.transactionId }, data: { decision: "APPROVED", approvedByHuman: true, bdtJti: jti, decisionReason: "Approved via Admin Telegram" } });
+        await prisma.bot.update({ where: { id: approval.botId }, data: { totalApproved: { increment: 1 } } });
+        await updateTrustScore(approval.botId, "APPROVED", null, true, approval.ownerId);
+
+        await createAuditLog({ entityType: "approval", entityId: approvalId, action: "approval.responded", actorType: "user", actorId: approval.ownerId, payload: { action: "approved", transactionId: approval.transactionId, amount: approval.amount, channel: "admin_telegram" } });
+        await createAuditLog({ entityType: "bdit", entityId: jti, action: "bdit.issued", actorType: "system", actorId: approval.botId, payload: { botId: approval.botId, amount: approval.amount, humanApproved: true } });
+        emitApprovalEvent(approval.ownerId, "approval_responded", { id: approvalId, status: "APPROVED", transactionId: approval.transactionId });
+
+        await answerCallbackQuery(callbackQueryId, "✅ Aprovado!", adminToken);
+        if (chatId && messageId) {
+          await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n✅ <b>APROVADO</b>`, adminToken);
+        }
+      } else {
+        await prisma.approvalRequest.update({ where: { id: approvalId }, data: { status: "REJECTED", respondedAt: new Date() } });
+        await prisma.transaction.update({ where: { id: approval.transactionId }, data: { decision: "BLOCKED", decisionReason: "Rejected via Admin Telegram" } });
+        await prisma.bot.update({ where: { id: approval.botId }, data: { totalBlocked: { increment: 1 } } });
+        await updateTrustScore(approval.botId, "BLOCKED", null, false, approval.ownerId);
+
+        await createAuditLog({ entityType: "approval", entityId: approvalId, action: "approval.responded", actorType: "user", actorId: approval.ownerId, payload: { action: "rejected", transactionId: approval.transactionId, channel: "admin_telegram" } });
+        emitApprovalEvent(approval.ownerId, "approval_responded", { id: approvalId, status: "REJECTED", transactionId: approval.transactionId });
+
+        await answerCallbackQuery(callbackQueryId, "❌ Rejeitado.", adminToken);
+        if (chatId && messageId) {
+          await editMessageText(chatId, messageId, `${cbq.message.text ?? ""}\n\n❌ <b>REJEITADO</b>`, adminToken);
+        }
+      }
+    } catch (err) {
+      console.error("[Admin Telegram Callback] Error processing approval:", err);
+      await answerCallbackQuery(callbackQueryId, "Erro ao processar. Tente pelo dashboard.", adminToken);
+    }
 
     return reply.send({ ok: true });
   });

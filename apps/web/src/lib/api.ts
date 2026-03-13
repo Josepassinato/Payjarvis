@@ -14,6 +14,10 @@ function buildHeaders(token?: string | null): Record<string, string> {
 
 async function request<T>(path: string, options?: RequestInit & { token?: string | null }): Promise<T> {
   const { token, ...fetchOptions } = options ?? {};
+  const method = fetchOptions.method ?? "GET";
+  console.log(`[PJ:API] ${method} ${path} — sending request`);
+  const startTime = Date.now();
+
   const res = await fetch(`${API_URL}${path}`, {
     ...fetchOptions,
     headers: {
@@ -22,12 +26,15 @@ async function request<T>(path: string, options?: RequestInit & { token?: string
     },
   });
 
+  const elapsed = Date.now() - startTime;
   const json = await res.json();
 
   if (!res.ok || json.success === false) {
+    console.error(`[PJ:API] ${method} ${path} — FAILED (${res.status}) in ${elapsed}ms:`, json.error ?? json.message);
     throw new ApiError(res.status, json.error ?? json.message ?? "Request failed");
   }
 
+  console.log(`[PJ:API] ${method} ${path} — OK (${res.status}) in ${elapsed}ms`);
   return json.data as T;
 }
 
@@ -95,6 +102,7 @@ export interface Policy {
   allowedDays: number[];
   allowedHoursStart: number;
   allowedHoursEnd: number;
+  timezone: string;
   allowedCategories: string[];
   blockedCategories: string[];
   merchantWhitelist: string[];
@@ -315,6 +323,41 @@ export function getByBot(token?: string | null): Promise<BotBreakdown[]> {
   return request<BotBreakdown[]>("/analytics/by-bot", { token });
 }
 
+// ── Onboarding ──
+
+export interface OnboardingStatus {
+  onboardingStep: number;
+  status: string;
+  kycLevel: string;
+}
+
+export function getOnboardingStatus(token?: string | null): Promise<OnboardingStatus> {
+  return request<OnboardingStatus>("/onboarding/status", { token });
+}
+
+export function submitOnboardingStep(step: number, data: Record<string, unknown>, token?: string | null): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/onboarding/step/${step}`, {
+    token,
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export interface OcrResult {
+  fullName: string | null;
+  dateOfBirth: string | null;
+  documentNumber: string | null;
+  country: string | null;
+}
+
+export function ocrDocument(image: string, mimeType: string, token?: string | null): Promise<OcrResult> {
+  return request<OcrResult>("/onboarding/ocr", {
+    token,
+    method: "POST",
+    body: JSON.stringify({ image, mimeType }),
+  });
+}
+
 // ── Agent Reputation ──
 
 export interface AgentReputation {
@@ -331,4 +374,62 @@ export interface AgentReputation {
 
 export function getReputation(botId: string, token?: string | null): Promise<AgentReputation> {
   return request<AgentReputation>(`/bots/${botId}/reputation`, { token });
+}
+
+// ── Bot Integrations ──
+
+export interface BotIntegration {
+  id: string;
+  botId: string;
+  provider: string;
+  category: string;
+  enabled: boolean;
+  connectedAt: string | null;
+  config: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getBotIntegrations(botId: string, token?: string | null): Promise<BotIntegration[]> {
+  return request<BotIntegration[]>(`/bots/${botId}/integrations`, { token });
+}
+
+export function updateBotIntegrations(
+  botId: string,
+  integrations: Array<{ provider: string; category: string; enabled: boolean }>,
+  token?: string | null
+): Promise<BotIntegration[]> {
+  return request<BotIntegration[]>(`/bots/${botId}/integrations`, {
+    token,
+    method: "PUT",
+    body: JSON.stringify({ integrations }),
+  });
+}
+
+// ── Available Integrations ──
+
+export interface AvailableProvider {
+  provider: string;
+  label: string;
+  description: string;
+  category: string;
+  available: boolean;
+}
+
+export function getAvailableIntegrations(token?: string | null): Promise<AvailableProvider[]> {
+  return request<AvailableProvider[]>("/api/integrations/available", { token });
+}
+
+export function toggleBotIntegration(
+  botId: string,
+  provider: string,
+  category: string,
+  enabled: boolean,
+  token?: string | null
+): Promise<BotIntegration> {
+  return request<BotIntegration>(`/bots/${botId}/integrations/toggle`, {
+    token,
+    method: "POST",
+    body: JSON.stringify({ provider, category, enabled }),
+  });
 }

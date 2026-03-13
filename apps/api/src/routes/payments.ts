@@ -6,7 +6,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { getKycLevel } from "../middleware/auth.js";
 import { createAuditLog } from "../services/audit.js";
 import { updateTrustScore } from "../services/trust-score.js";
-import { redisSet, redisExists } from "../services/redis.js";
+import { redisSet, redisSetNX, redisExists, redisDel } from "../services/redis.js";
 import { randomUUID } from "node:crypto";
 import { emitApprovalEvent, emitBotApprovalEvent } from "./approvals.js";
 import { notifyApprovalCreated, notifyTransactionApproved, notifyTransactionBlocked } from "../services/notifications.js";
@@ -14,9 +14,14 @@ import { resolveAgentId, getAgentByBotId, updateAgentCounters } from "../service
 import { TRUST_THRESHOLD_BLOCK } from "@payjarvis/types";
 
 export async function paymentRoutes(app: FastifyInstance) {
+  const env = process.env.BDIT_ENV ?? process.env.NODE_ENV ?? "development";
+  const issuerName = env === "production" ? "payjarvis" : `payjarvis-${env}`;
+  const defaultKid = `payjarvis-${env}-001`;
+
   const issuer = new BditIssuer(
     (process.env.PAYJARVIS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
-    process.env.PAYJARVIS_KEY_ID ?? "payjarvis-key-001"
+    process.env.PAYJARVIS_KEY_ID ?? defaultKid,
+    issuerName
   );
 
   // Request payment — authenticated by bot API key
@@ -343,8 +348,20 @@ export async function paymentRoutes(app: FastifyInstance) {
       return reply.status(400).send({ success: false, error: "jti is required" });
     }
 
+    // Atomic gate: SET NX ensures only one request wins
+    const claimed = await redisSetNX(`bdit:used:${jti}`, "1", 600);
+    if (!claimed) {
+      return reply.status(409).send({
+        success: false,
+        error: "TOKEN_ALREADY_USED",
+        reason: "This BDIT token has already been consumed",
+      });
+    }
+
     const token = await prisma.bditToken.findUnique({ where: { jti } });
     if (!token) {
+      // Release the Redis lock since token doesn't exist
+      await redisDel(`bdit:used:${jti}`);
       return reply.status(404).send({ success: false, error: "Token not found" });
     }
 
@@ -357,6 +374,7 @@ export async function paymentRoutes(app: FastifyInstance) {
     }
 
     if (token.status === "REVOKED") {
+      await redisDel(`bdit:used:${jti}`);
       return reply.status(409).send({
         success: false,
         error: "TOKEN_REVOKED",
@@ -376,14 +394,11 @@ export async function paymentRoutes(app: FastifyInstance) {
       });
     }
 
-    // Mark as used
+    // Mark as used in database
     await prisma.bditToken.update({
       where: { jti },
       data: { status: "USED", usedAt: new Date() },
     });
-
-    // Mark in Redis for fast lookup
-    await redisSet(`bdit:used:${jti}`, "1", 600);
 
     await createAuditLog({
       entityType: "bdit",
